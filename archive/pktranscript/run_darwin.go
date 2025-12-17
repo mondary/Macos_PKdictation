@@ -27,7 +27,6 @@ static NSString *gLatestTranscript = @"";
 
 static NSStatusItem *gStatusItem = nil;
 static CFMachPortRef gEventTap = NULL;
-static NSMenuItem *gRecordToggleItem = nil;
 static NSMenuItem *gTranscriptToggleItem = nil;
 static NSMenuItem *gTranscriptItem = nil;
 static NSMenuItem *gCopyTranscriptItem = nil;
@@ -42,15 +41,12 @@ static void startRecording(void);
 static void stopRecording(void);
 static void updateMenuState(void);
 static void copyToClipboard(NSString *text);
+static void reopenMenuSoon(void);
 
 @interface MenuHandler : NSObject
 @end
 
 @implementation MenuHandler
-- (void)menuToggleRecord:(id)sender {
-	(void)sender;
-	if (gIsRecording) stopRecording(); else startRecording();
-}
 - (void)menuToggleTranscript:(id)sender {
 	(void)sender;
 	gAutoPasteEnabled = !gAutoPasteEnabled;
@@ -117,6 +113,14 @@ static void showAccessibilityAlertOnce(void) {
 	[a runModal];
 }
 
+static void reopenMenuSoon(void) {
+	if (!gStatusItem || !gStatusItem.menu) return;
+	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(80 * NSEC_PER_MSEC)), dispatch_get_main_queue(), ^{
+		// Re-open the status item menu right after an action (menus close automatically on click).
+		if (gStatusItem.button) [gStatusItem.button performClick:nil];
+	});
+}
+
 static void copyAndMaybePasteText(NSString *text, bool shouldPaste) {
 	copyToClipboard(text);
 	if (!shouldPaste) return;
@@ -139,10 +143,6 @@ static NSString *truncateTranscript(NSString *s) {
 }
 
 static void updateMenuState(void) {
-	if (gRecordToggleItem) {
-		gRecordToggleItem.enabled = YES;
-		gRecordToggleItem.title = gIsRecording ? @"Stop" : @"Start";
-	}
 	if (gTranscriptToggleItem) gTranscriptToggleItem.state = gAutoPasteEnabled ? NSControlStateValueOn : NSControlStateValueOff;
 
 	if (gTranscriptItem) {
@@ -289,10 +289,6 @@ static void setupStatusBar(void) {
 	menu.autoenablesItems = NO;
 	// Menu handler implemented below.
 	gMenuHandler = [MenuHandler new];
-
-	gRecordToggleItem = [[NSMenuItem alloc] initWithTitle:@"Start" action:@selector(menuToggleRecord:) keyEquivalent:@""];
-	gRecordToggleItem.target = gMenuHandler;
-	[menu addItem:gRecordToggleItem];
 
 	gHotkeyItem = [[NSMenuItem alloc] initWithTitle:hotkeyTitle() action:nil keyEquivalent:@""];
 	gHotkeyItem.enabled = NO;

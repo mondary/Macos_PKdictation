@@ -33,7 +33,6 @@ open dist/PKTranscript.app
 
 - Par défaut : maintenir **Fn** pour parler, relâcher pour coller la transcription.
 - Menu barre “PKT” :
-  - **Start/Stop** : toggle pour lancer/arrêter l’enregistrement sans hotkey
   - **Transcript (auto-paste)** : toggle (si OFF, ça copie seulement dans le clipboard, sans coller)
   - **Copier transcript** : copie la dernière transcription
   - Quitter : *Quitter PKTranscript*
