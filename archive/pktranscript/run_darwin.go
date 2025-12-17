@@ -438,9 +438,10 @@ static void ensurePopover(void) {
 	gPopoverAutoPasteCheckbox.translatesAutoresizingMaskIntoConstraints = NO;
 
 	gPopoverSettingsButton = [NSButton buttonWithTitle:@"Settings…" target:gMenuHandler action:@selector(popoverOpenSettings:)];
-	gPopoverSettingsButton.bordered = NO;
+	gPopoverSettingsButton.bordered = YES;
+	gPopoverSettingsButton.bezelStyle = NSBezelStyleTexturedRounded;
 	gPopoverSettingsButton.alignment = NSTextAlignmentLeft;
-	gPopoverSettingsButton.font = [NSFont systemFontOfSize:12];
+	gPopoverSettingsButton.controlSize = NSControlSizeSmall;
 	gPopoverSettingsButton.translatesAutoresizingMaskIntoConstraints = NO;
 
 	NSBox *sep1 = [NSBox new];
@@ -475,10 +476,27 @@ static void ensurePopover(void) {
 	sep2.translatesAutoresizingMaskIntoConstraints = NO;
 
 	gPopoverQuitButton = [NSButton buttonWithTitle:@"Quitter" target:gMenuHandler action:@selector(popoverQuit:)];
-	gPopoverQuitButton.bordered = NO;
+	gPopoverQuitButton.bordered = YES;
+	gPopoverQuitButton.bezelStyle = NSBezelStyleTexturedRounded;
 	gPopoverQuitButton.alignment = NSTextAlignmentLeft;
-	gPopoverQuitButton.font = [NSFont systemFontOfSize:12];
+	gPopoverQuitButton.controlSize = NSControlSizeSmall;
 	gPopoverQuitButton.translatesAutoresizingMaskIntoConstraints = NO;
+
+	NSView *bottomSpacer = [NSView new];
+	bottomSpacer.translatesAutoresizingMaskIntoConstraints = NO;
+	[bottomSpacer setContentHuggingPriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];
+	[gPopoverSettingsButton setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
+	[gPopoverQuitButton setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
+
+	NSStackView *bottomRow = [NSStackView new];
+	bottomRow.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+	bottomRow.spacing = 8;
+	bottomRow.distribution = NSStackViewDistributionFill;
+	bottomRow.alignment = NSLayoutAttributeCenterY;
+	bottomRow.translatesAutoresizingMaskIntoConstraints = NO;
+	[bottomRow addArrangedSubview:gPopoverSettingsButton];
+	[bottomRow addArrangedSubview:bottomSpacer];
+	[bottomRow addArrangedSubview:gPopoverQuitButton];
 
 	gPopoverStack = [NSStackView new];
 	gPopoverStack.orientation = NSUserInterfaceLayoutOrientationVertical;
@@ -489,12 +507,11 @@ static void ensurePopover(void) {
 	[gPopoverStack addArrangedSubview:title];
 	[gPopoverStack addArrangedSubview:gPopoverHotkeyLabel];
 	[gPopoverStack addArrangedSubview:gPopoverAutoPasteCheckbox];
-	[gPopoverStack addArrangedSubview:gPopoverSettingsButton];
 	[gPopoverStack addArrangedSubview:sep1];
 	[gPopoverStack addArrangedSubview:gPopoverHistoryHeader];
 	[gPopoverStack addArrangedSubview:historyStack];
 	[gPopoverStack addArrangedSubview:sep2];
-	[gPopoverStack addArrangedSubview:gPopoverQuitButton];
+	[gPopoverStack addArrangedSubview:bottomRow];
 
 	[content addSubview:gPopoverStack];
 
@@ -503,6 +520,9 @@ static void ensurePopover(void) {
 		[gPopoverStack.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:14],
 		[gPopoverStack.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-14],
 		[gPopoverStack.bottomAnchor constraintLessThanOrEqualToAnchor:content.bottomAnchor constant:-14],
+
+		[bottomRow.leadingAnchor constraintEqualToAnchor:gPopoverStack.leadingAnchor],
+		[bottomRow.trailingAnchor constraintEqualToAnchor:gPopoverStack.trailingAnchor],
 
 		[sep1.heightAnchor constraintEqualToConstant:1],
 		[sep2.heightAnchor constraintEqualToConstant:1],
