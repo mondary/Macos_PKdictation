@@ -70,9 +70,25 @@ static void setHotKeyCode(uint16_t v) {
 
 static void updateStatusItemTitle(void) {
 	if (!gStatusItem) return;
+	if (!gStatusItem.button) return;
 	if (gIsRecording) {
-		gStatusItem.button.title = @"● PKT";
+		NSColor *red = [NSColor systemRedColor];
+		NSColor *normal = [NSColor labelColor];
+		NSFont *font = [NSFont menuBarFontOfSize:0];
+
+		NSDictionary *dotAttrs = font ? @{ NSForegroundColorAttributeName: red, NSFontAttributeName: font }
+		                               : @{ NSForegroundColorAttributeName: red };
+		NSDictionary *textAttrs = font ? @{ NSForegroundColorAttributeName: normal, NSFontAttributeName: font }
+		                                : @{ NSForegroundColorAttributeName: normal };
+
+		NSMutableAttributedString *s = [[NSMutableAttributedString alloc] initWithString:@"●" attributes:dotAttrs];
+		[s appendAttributedString:[[NSAttributedString alloc] initWithString:@" PKT" attributes:textAttrs]];
+		gStatusItem.button.attributedTitle = s;
 	} else {
+		NSFont *font = [NSFont menuBarFontOfSize:0];
+		NSDictionary *attrs = font ? @{ NSForegroundColorAttributeName: [NSColor labelColor], NSFontAttributeName: font }
+		                           : @{ NSForegroundColorAttributeName: [NSColor labelColor] };
+		gStatusItem.button.attributedTitle = [[NSAttributedString alloc] initWithString:@"PKT" attributes:attrs];
 		gStatusItem.button.title = @"PKT";
 	}
 }
@@ -123,7 +139,7 @@ static void reopenMenuSoon(void) {
 	if (!gStatusItem || !gStatusItem.menu) return;
 	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(80 * NSEC_PER_MSEC)), dispatch_get_main_queue(), ^{
 		// Re-open the status item menu right after an action (menus close automatically on click).
-		if (gStatusItem.button) [gStatusItem.button performClick:nil];
+		if (gStatusItem.button) [gStatusItem.button performClick:gStatusItem.button];
 	});
 }
 
