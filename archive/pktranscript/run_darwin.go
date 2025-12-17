@@ -24,6 +24,8 @@ static SFSpeechRecognitionTask *gTask = nil;
 static AVAudioEngine *gEngine = nil;
 
 static NSString *gLatestTranscript = @"";
+static NSMutableArray<NSString *> *gTranscriptHistory = nil;
+static bool gDidCommitTranscript = false;
 
 static NSStatusItem *gStatusItem = nil;
 static CFMachPortRef gEventTap = NULL;
@@ -31,6 +33,8 @@ static NSMenuItem *gTranscriptToggleItem = nil;
 static NSMenuItem *gTranscriptItem = nil;
 static NSMenuItem *gCopyTranscriptItem = nil;
 static NSMenuItem *gHotkeyItem = nil;
+static NSMenuItem *gHistoryHeaderItem = nil;
+static NSMenuItem *gHistoryItems[10] = { nil };
 static id gMenuHandler = nil;
 static id gFlagsChangedMonitor = nil;
 static id gFlagsChangedLocalMonitor = nil;
@@ -42,6 +46,7 @@ static void stopRecording(void);
 static void updateMenuState(void);
 static void copyToClipboard(NSString *text);
 static void reopenMenuSoon(void);
+static void addTranscriptToHistory(NSString *text);
 
 @interface MenuHandler : NSObject
 @end
@@ -55,6 +60,13 @@ static void reopenMenuSoon(void);
 - (void)menuCopyTranscript:(id)sender {
 	(void)sender;
 	copyToClipboard(gLatestTranscript);
+}
+- (void)menuCopyHistory:(id)sender {
+	NSMenuItem *item = (NSMenuItem *)sender;
+	if (![item isKindOfClass:[NSMenuItem class]]) return;
+	id obj = item.representedObject;
+	if (![obj isKindOfClass:[NSString class]]) return;
+	copyToClipboard((NSString *)obj);
 }
 @end
 
@@ -134,28 +146,90 @@ static void copyAndMaybePasteText(NSString *text, bool shouldPaste) {
 	pasteClipboard();
 }
 
-static NSString *truncateTranscript(NSString *s) {
+static NSString *truncateStringToMenuWidth(NSString *s, CGFloat maxWidth) {
 	if (!s) return @"";
 	NSString *trim = [s stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
 	if (trim.length == 0) return @"";
-	if (trim.length <= 80) return trim;
-	return [[trim substringToIndex:80] stringByAppendingString:@"…"];
+
+	NSFont *font = [NSFont menuFontOfSize:0];
+	NSDictionary *attrs = @{ NSFontAttributeName : font };
+	if ([trim sizeWithAttributes:attrs].width <= maxWidth) return trim;
+
+	NSString *ellipsis = @"…";
+	CGFloat ellW = [ellipsis sizeWithAttributes:attrs].width;
+	if (ellW >= maxWidth) return ellipsis;
+
+	NSUInteger lo = 0;
+	NSUInteger hi = trim.length;
+	NSUInteger best = 0;
+	while (lo <= hi) {
+		NSUInteger mid = (lo + hi) / 2;
+		NSRange r = [trim rangeOfComposedCharacterSequencesForRange:NSMakeRange(0, mid)];
+		NSString *candidate = [[trim substringWithRange:r] stringByAppendingString:ellipsis];
+		CGFloat w = [candidate sizeWithAttributes:attrs].width;
+		if (w <= maxWidth) {
+			best = r.length;
+			lo = mid + 1;
+		} else {
+			if (mid == 0) break;
+			hi = mid - 1;
+		}
+	}
+	NSRange r = [trim rangeOfComposedCharacterSequencesForRange:NSMakeRange(0, best)];
+	return [[trim substringWithRange:r] stringByAppendingString:ellipsis];
+}
+
+static void addTranscriptToHistory(NSString *text) {
+	if (!text) return;
+	NSString *trim = [text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+	if (trim.length == 0) return;
+
+	if (!gTranscriptHistory) {
+		gTranscriptHistory = [NSMutableArray arrayWithCapacity:10];
+	}
+	if (gTranscriptHistory.count > 0) {
+		NSString *top = gTranscriptHistory[0];
+		if ([top isEqualToString:trim]) return;
+	}
+	[gTranscriptHistory insertObject:trim atIndex:0];
+	while (gTranscriptHistory.count > 10) {
+		[gTranscriptHistory removeLastObject];
+	}
 }
 
 static void updateMenuState(void) {
+	const CGFloat kMaxMenuTextWidth = 280.0;
 	if (gTranscriptToggleItem) gTranscriptToggleItem.state = gAutoPasteEnabled ? NSControlStateValueOn : NSControlStateValueOff;
 
 	if (gTranscriptItem) {
-		NSString *t = truncateTranscript(gLatestTranscript);
-		if (t.length == 0) {
-			gTranscriptItem.title = @"Transcript: (vide)";
-		} else {
-			gTranscriptItem.title = [NSString stringWithFormat:@"Transcript: %@", t];
-		}
+		NSString *trim = [gLatestTranscript stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+		NSString *full = (trim.length == 0) ? @"Transcript: (vide)" : [NSString stringWithFormat:@"Transcript: %@", trim];
+		gTranscriptItem.title = truncateStringToMenuWidth(full, kMaxMenuTextWidth);
 	}
 	if (gCopyTranscriptItem) {
 		NSString *t = [gLatestTranscript stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
 		gCopyTranscriptItem.enabled = (t.length > 0);
+	}
+
+	BOOL hasHistory = (gTranscriptHistory && gTranscriptHistory.count > 0);
+	if (gHistoryHeaderItem) {
+		gHistoryHeaderItem.hidden = !hasHistory;
+	}
+	for (int i = 0; i < 10; i++) {
+		NSMenuItem *it = gHistoryItems[i];
+		if (!it) continue;
+		if (!hasHistory || i >= (int)gTranscriptHistory.count) {
+			it.hidden = YES;
+			it.representedObject = nil;
+			it.title = @"";
+			continue;
+		}
+		NSString *entry = gTranscriptHistory[i];
+		NSString *full = [NSString stringWithFormat:@"%d. %@", i + 1, entry];
+		it.title = truncateStringToMenuWidth(full, kMaxMenuTextWidth);
+		it.representedObject = entry;
+		it.enabled = YES;
+		it.hidden = NO;
 	}
 }
 
@@ -191,6 +265,7 @@ static void startRecording(void) {
 	}
 
 	gIsRecording = true;
+	gDidCommitTranscript = false;
 	gPasteWhenFinal = false;
 	gCopyWhenFinal = false;
 	gLatestTranscript = @"";
@@ -235,6 +310,14 @@ static void startRecording(void) {
 		}
 
 		BOOL isFinal = result ? result.isFinal : NO;
+		if ((isFinal || error) && !gDidCommitTranscript) {
+			gDidCommitTranscript = true;
+			NSString *toCommit = gLatestTranscript;
+			dispatch_async(dispatch_get_main_queue(), ^{
+				addTranscriptToHistory(toCommit);
+				updateMenuState();
+			});
+		}
 		if ((isFinal || error) && gPasteWhenFinal) {
 			NSString *toPaste = gLatestTranscript;
 			gPasteWhenFinal = false;
@@ -289,6 +372,7 @@ static void setupStatusBar(void) {
 	menu.autoenablesItems = NO;
 	// Menu handler implemented below.
 	gMenuHandler = [MenuHandler new];
+	if (!gTranscriptHistory) gTranscriptHistory = [NSMutableArray arrayWithCapacity:10];
 
 	gHotkeyItem = [[NSMenuItem alloc] initWithTitle:hotkeyTitle() action:nil keyEquivalent:@""];
 	gHotkeyItem.enabled = NO;
@@ -307,6 +391,20 @@ static void setupStatusBar(void) {
 	gCopyTranscriptItem = [[NSMenuItem alloc] initWithTitle:@"Copier transcript" action:@selector(menuCopyTranscript:) keyEquivalent:@""];
 	gCopyTranscriptItem.target = gMenuHandler;
 	[menu addItem:gCopyTranscriptItem];
+
+	[menu addItem:[NSMenuItem separatorItem]];
+
+	gHistoryHeaderItem = [[NSMenuItem alloc] initWithTitle:@"Historique (10)" action:nil keyEquivalent:@""];
+	gHistoryHeaderItem.enabled = NO;
+	[menu addItem:gHistoryHeaderItem];
+
+	for (int i = 0; i < 10; i++) {
+		gHistoryItems[i] = [[NSMenuItem alloc] initWithTitle:@"" action:@selector(menuCopyHistory:) keyEquivalent:@""];
+		gHistoryItems[i].target = gMenuHandler;
+		gHistoryItems[i].indentationLevel = 1;
+		gHistoryItems[i].hidden = YES;
+		[menu addItem:gHistoryItems[i]];
+	}
 
 	[menu addItem:[NSMenuItem separatorItem]];
 	NSMenuItem *quit = [[NSMenuItem alloc] initWithTitle:@"Quitter PKTranscript" action:@selector(terminate:) keyEquivalent:@"q"];
