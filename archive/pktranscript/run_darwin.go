@@ -34,6 +34,9 @@ static NSMenuItem *gTranscriptItem = nil;
 static NSMenuItem *gCopyTranscriptItem = nil;
 static NSMenuItem *gHotkeyItem = nil;
 static id gMenuHandler = nil;
+static id gFlagsChangedMonitor = nil;
+static id gFlagsChangedLocalMonitor = nil;
+static BOOL gFnIsDown = NO;
 
 static void startRecording(void);
 static void stopRecording(void);
@@ -238,17 +241,7 @@ static CGEventRef eventTapCallback(CGEventTapProxy proxy, CGEventType type, CGEv
 	if (keycode != gHotKeyCode) return event;
 
 	if (type == kCGEventFlagsChanged && keycode == (CGKeyCode)kVK_Function) {
-		CGEventFlags flags = CGEventGetFlags(event);
-		bool fnDown = (flags & kCGEventFlagMaskSecondaryFn) != 0;
-		if (fnDown) {
-			dispatch_async(dispatch_get_main_queue(), ^{
-				startRecording();
-			});
-		} else {
-			dispatch_async(dispatch_get_main_queue(), ^{
-				stopRecording();
-			});
-		}
+		// Fn is handled via NSEvent monitors (more reliable). Avoid double-trigger here.
 		return event;
 	}
 
@@ -337,6 +330,22 @@ static void runApp(const char *localeCString) {
 
 		setupStatusBar();
 		updateStatusItemTitle();
+
+		// Fn is a modifier key and may not produce keyDown/up events; listen to modifier flag changes.
+		void (^fnFlagsHandler)(NSEvent *) = ^(NSEvent *e) {
+			if (gHotKeyCode != (uint16_t)kVK_Function) return;
+			BOOL down = (e.modifierFlags & NSEventModifierFlagFunction) != 0;
+			if (down == gFnIsDown) return;
+			gFnIsDown = down;
+			dispatch_async(dispatch_get_main_queue(), ^{
+				if (down) startRecording(); else stopRecording();
+			});
+		};
+		gFlagsChangedMonitor = [NSEvent addGlobalMonitorForEventsMatchingMask:NSEventMaskFlagsChanged handler:fnFlagsHandler];
+		gFlagsChangedLocalMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskFlagsChanged handler:^NSEvent * _Nullable(NSEvent * _Nonnull e) {
+			fnFlagsHandler(e);
+			return e;
+		}];
 
 		CGEventMask mask = CGEventMaskBit(kCGEventKeyDown) | CGEventMaskBit(kCGEventKeyUp) | CGEventMaskBit(kCGEventFlagsChanged);
 		gEventTap = CGEventTapCreate(kCGSessionEventTap, kCGHeadInsertEventTap, 0, mask, eventTapCallback, NULL);
