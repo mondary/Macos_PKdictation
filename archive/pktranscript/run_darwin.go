@@ -30,8 +30,6 @@ static bool gDidCommitTranscript = false;
 static NSStatusItem *gStatusItem = nil;
 static CFMachPortRef gEventTap = NULL;
 static NSMenuItem *gTranscriptToggleItem = nil;
-static NSMenuItem *gTranscriptItem = nil;
-static NSMenuItem *gCopyTranscriptItem = nil;
 static NSMenuItem *gHotkeyItem = nil;
 static NSMenuItem *gHistoryHeaderItem = nil;
 static NSMenuItem *gHistoryItems[10] = { nil };
@@ -56,10 +54,6 @@ static void addTranscriptToHistory(NSString *text);
 	(void)sender;
 	gAutoPasteEnabled = !gAutoPasteEnabled;
 	updateMenuState();
-}
-- (void)menuCopyTranscript:(id)sender {
-	(void)sender;
-	copyToClipboard(gLatestTranscript);
 }
 - (void)menuCopyHistory:(id)sender {
 	NSMenuItem *item = (NSMenuItem *)sender;
@@ -200,16 +194,6 @@ static void addTranscriptToHistory(NSString *text) {
 static void updateMenuState(void) {
 	const CGFloat kMaxMenuTextWidth = 280.0;
 	if (gTranscriptToggleItem) gTranscriptToggleItem.state = gAutoPasteEnabled ? NSControlStateValueOn : NSControlStateValueOff;
-
-	if (gTranscriptItem) {
-		NSString *trim = [gLatestTranscript stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-		NSString *full = (trim.length == 0) ? @"Transcript: (vide)" : [NSString stringWithFormat:@"Transcript: %@", trim];
-		gTranscriptItem.title = truncateStringToMenuWidth(full, kMaxMenuTextWidth);
-	}
-	if (gCopyTranscriptItem) {
-		NSString *t = [gLatestTranscript stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-		gCopyTranscriptItem.enabled = (t.length > 0);
-	}
 
 	BOOL hasHistory = (gTranscriptHistory && gTranscriptHistory.count > 0);
 	if (gHistoryHeaderItem) {
@@ -383,14 +367,6 @@ static void setupStatusBar(void) {
 	gTranscriptToggleItem = [[NSMenuItem alloc] initWithTitle:@"Transcript (auto-paste)" action:@selector(menuToggleTranscript:) keyEquivalent:@""];
 	gTranscriptToggleItem.target = gMenuHandler;
 	[menu addItem:gTranscriptToggleItem];
-
-	gTranscriptItem = [[NSMenuItem alloc] initWithTitle:@"Transcript: (vide)" action:nil keyEquivalent:@""];
-	gTranscriptItem.enabled = NO;
-	[menu addItem:gTranscriptItem];
-
-	gCopyTranscriptItem = [[NSMenuItem alloc] initWithTitle:@"Copier transcript" action:@selector(menuCopyTranscript:) keyEquivalent:@""];
-	gCopyTranscriptItem.target = gMenuHandler;
-	[menu addItem:gCopyTranscriptItem];
 
 	[menu addItem:[NSMenuItem separatorItem]];
 

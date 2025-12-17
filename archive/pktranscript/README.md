@@ -34,7 +34,6 @@ open dist/PKTranscript.app
 - Par défaut : maintenir **Fn** pour parler, relâcher pour coller la transcription.
 - Menu barre “PKT” :
   - **Transcript (auto-paste)** : toggle (si OFF, ça copie seulement dans le clipboard, sans coller)
-  - **Copier transcript** : copie la dernière transcription
   - **Historique (10)** : affiche les 10 dernières transcriptions (clic pour copier)
   - Quitter : *Quitter PKTranscript*
 
