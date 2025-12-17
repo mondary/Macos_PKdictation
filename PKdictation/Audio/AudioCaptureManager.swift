@@ -10,6 +10,10 @@ final class AudioCaptureManager: ObservableObject {
 	private var audioFile: AVAudioFile?
 	private var converter: AVAudioConverter?
 	private var currentRecordingURL: URL?
+	nonisolated(unsafe) private let writeGroup = DispatchGroup()
+	nonisolated(unsafe) private var lastLevelsUpdateNanos: UInt64 = 0
+	private let audioProcessingQueue = DispatchQueue(label: "PKdictation.AudioCapture.processing", qos: .userInitiated)
+	private var recordingStartedAt: Date?
 
 	func start() async throws {
 		guard !isRecording else { return }
@@ -47,15 +51,33 @@ final class AudioCaptureManager: ObservableObject {
 		self.audioFile = file
 		self.converter = converter
 		self.currentRecordingURL = url
+		self.recordingStartedAt = Date()
+		self.lastLevelsUpdateNanos = 0
 		self.isRecording = true
 	}
 
-	func stop() throws -> URL {
+	/// Stops recording, optionally keeping a small "tail" to avoid truncating the last syllables.
+	/// Also waits briefly to let the last tap callback finish writing before the file is consumed.
+	func stop(tailPaddingMs: Int = 600, finalizeDelayMs: Int = 250) async throws -> URL {
 		guard isRecording else {
 			throw AudioCaptureError.notRecording
 		}
 
+		if tailPaddingMs > 0 {
+			try? await Task.sleep(nanoseconds: UInt64(tailPaddingMs) * 1_000_000)
+		}
+
 		engine?.inputNode.removeTap(onBus: 0)
+
+		if finalizeDelayMs > 0 {
+			try? await Task.sleep(nanoseconds: UInt64(finalizeDelayMs) * 1_000_000)
+		}
+
+		let waitResult = writeGroup.wait(timeout: .now() + .seconds(2))
+		if waitResult == .timedOut {
+			LogStore.shared.log("Audio finalize: timed out waiting for pending writes (2s).")
+		}
+
 		engine?.stop()
 
 		engine = nil
@@ -66,13 +88,52 @@ final class AudioCaptureManager: ObservableObject {
 		guard let url = currentRecordingURL else {
 			throw AudioCaptureError.missingRecordingURL
 		}
+
+		let elapsedMs: Int
+		if let startedAt = recordingStartedAt {
+			elapsedMs = Int((Date().timeIntervalSince(startedAt) * 1000).rounded())
+		} else {
+			elapsedMs = -1
+		}
+		recordingStartedAt = nil
+
+		let sizeBytes: Int64
+		if let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+		   let size = attrs[.size] as? NSNumber
+		{
+			sizeBytes = size.int64Value
+		} else {
+			sizeBytes = -1
+		}
+		LogStore.shared.log("Audio captured: \(elapsedMs)ms, wavSize=\(sizeBytes) bytes, file=\(url.lastPathComponent)")
+		if sizeBytes >= 0 && sizeBytes < 2048 {
+			LogStore.shared.log("Audio warning: WAV file is very small (\(sizeBytes) bytes). Mic permission or capture may have failed.")
+		}
+
 		return url
 	}
 
-	private func process(buffer: AVAudioPCMBuffer, converter: AVAudioConverter, recordFormat: AVAudioFormat, file: AVAudioFile) {
-		let newLevels = AudioLevelMeter.levels(from: buffer, barCount: 16, gain: 8)
-		Task { @MainActor [weak self] in
-			self?.levels = newLevels.map { Double($0) }
+	nonisolated private func process(buffer: AVAudioPCMBuffer, converter: AVAudioConverter, recordFormat: AVAudioFormat, file: AVAudioFile) {
+		// The audio tap callback runs on a real‑time audio thread. Avoid heavy work (conversion + file I/O)
+		// here; instead, copy the buffer and process it on a serial queue.
+		guard let copied = copyBuffer(buffer) else { return }
+		writeGroup.enter()
+		audioProcessingQueue.async { [weak self] in
+			defer { self?.writeGroup.leave() }
+			self?.processCopiedBuffer(copied, converter: converter, recordFormat: recordFormat, file: file)
+		}
+	}
+
+	nonisolated private func processCopiedBuffer(_ buffer: AVAudioPCMBuffer, converter: AVAudioConverter, recordFormat: AVAudioFormat, file: AVAudioFile) {
+		// Avoid flooding the main actor with level updates (audio tap can fire ~40–100x/sec).
+		let now = DispatchTime.now().uptimeNanoseconds
+		let minInterval: UInt64 = 33_000_000 // ~30 fps
+		if now &- lastLevelsUpdateNanos >= minInterval {
+			lastLevelsUpdateNanos = now
+			let newLevels = AudioLevelMeter.levels(from: buffer, barCount: 16, gain: 8)
+			Task { @MainActor [weak self] in
+				self?.levels = newLevels.map { Double($0) }
+			}
 		}
 
 		let inputFrameCount = AVAudioFrameCount(buffer.frameLength)
@@ -82,7 +143,13 @@ final class AudioCaptureManager: ObservableObject {
 		guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: recordFormat, frameCapacity: outputFrameCapacity) else { return }
 
 		var conversionError: NSError?
+		var didProvideInput = false
 		let status = converter.convert(to: outputBuffer, error: &conversionError) { _, outStatus in
+			if didProvideInput {
+				outStatus.pointee = .endOfStream
+				return nil
+			}
+			didProvideInput = true
 			outStatus.pointee = .haveData
 			return buffer
 		}
@@ -96,6 +163,41 @@ final class AudioCaptureManager: ObservableObject {
 		} catch {
 			return
 		}
+	}
+
+	nonisolated private func copyBuffer(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+		let format = buffer.format
+		let frames = buffer.frameLength
+		guard let copy = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames) else { return nil }
+		copy.frameLength = frames
+
+		let channels = Int(format.channelCount)
+
+		if let src = buffer.floatChannelData, let dst = copy.floatChannelData {
+			let bytesPerChannel = Int(frames) * MemoryLayout<Float>.size
+			for ch in 0..<channels {
+				memcpy(dst[ch], src[ch], bytesPerChannel)
+			}
+			return copy
+		}
+
+		if let src = buffer.int16ChannelData, let dst = copy.int16ChannelData {
+			let bytesPerChannel = Int(frames) * MemoryLayout<Int16>.size
+			for ch in 0..<channels {
+				memcpy(dst[ch], src[ch], bytesPerChannel)
+			}
+			return copy
+		}
+
+		if let src = buffer.int32ChannelData, let dst = copy.int32ChannelData {
+			let bytesPerChannel = Int(frames) * MemoryLayout<Int32>.size
+			for ch in 0..<channels {
+				memcpy(dst[ch], src[ch], bytesPerChannel)
+			}
+			return copy
+		}
+
+		return nil
 	}
 
 	private func makeNewRecordingURL() throws -> URL {

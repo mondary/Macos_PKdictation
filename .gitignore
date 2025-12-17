@@ -1,2 +1,6 @@
 /.DS_Store
 /.derivedData
+/.derivedData_*
+/.derivedData_codex*
+/DerivedData
+/dist

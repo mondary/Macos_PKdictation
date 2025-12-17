@@ -6,18 +6,19 @@ final class OverlayWindowController: NSWindowController, OverlayPresenting {
 	private let panel: NSPanel
 	private let content: OverlayContentView
 	private var cancellables: Set<AnyCancellable> = []
+	private let topOverhang: CGFloat = 14
 
 	init(controller: DictationController) {
 		let contentView = OverlayContentView()
 
 		let panel = NSPanel(
-			contentRect: NSRect(x: 0, y: 0, width: 460, height: 140),
+			contentRect: NSRect(x: 0, y: 0, width: 360, height: 44 + topOverhang),
 			styleMask: [.borderless, .nonactivatingPanel],
 			backing: .buffered,
 			defer: false
 		)
 		panel.isFloatingPanel = true
-		panel.level = .floating
+		panel.level = .statusBar
 		panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 		panel.isOpaque = false
 		panel.backgroundColor = .clear
@@ -51,10 +52,12 @@ final class OverlayWindowController: NSWindowController, OverlayPresenting {
 
 	private func reposition() {
 		guard let screen = NSScreen.main else { return }
-		let frame = screen.visibleFrame
+		let frame = screen.frame
 		let size = panel.frame.size
 		let x = frame.midX - size.width / 2
-		let y = frame.maxY - size.height - 24
+		// Push the top portion slightly offscreen so the shape feels like it "comes out"
+		// from outside the screen into the content area (notch effect).
+		let y = frame.maxY - size.height + topOverhang
 		panel.setFrameOrigin(NSPoint(x: x, y: y))
 	}
 

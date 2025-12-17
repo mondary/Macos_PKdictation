@@ -44,7 +44,12 @@ final class SettingsViewController: NSViewController, NSComboBoxDelegate {
 	private let enableAccessibilityButton = NSButton(title: "Enable Accessibility…", target: nil, action: nil)
 	private let enableInputMonitoringButton = NSButton(title: "Enable Input Monitoring…", target: nil, action: nil)
 	private let retryHotkeyButton = NSButton(title: "Retry hotkey", target: nil, action: nil)
+	private let accessibilityStatusLabel = NSTextField(labelWithString: "")
+	private let inputMonitoringStatusLabel = NSTextField(labelWithString: "")
+	private let hotkeyListenerStatusLabel = NSTextField(labelWithString: "")
 	private let hotkeyErrorLabel = NSTextField(labelWithString: "")
+	private let installWarningLabel = NSTextField(labelWithString: "")
+	private let revealAppButton = NSButton(title: "Show app in Finder", target: nil, action: nil)
 	private let permissionsStatusLabel = NSTextField(labelWithString: "")
 	private let microphoneStatusLabel = NSTextField(labelWithString: "")
 	private let enableMicrophoneButton = NSButton(title: "Enable Microphone…", target: nil, action: nil)
@@ -63,8 +68,17 @@ final class SettingsViewController: NSViewController, NSComboBoxDelegate {
 	private let modelStatusLabel = NSTextField(labelWithString: "")
 	private let modelErrorLabel = NSTextField(labelWithString: "")
 
+	private let chatField = NSTextField()
+	private let chatSendButton = NSButton(title: "Send", target: nil, action: nil)
+	private let chatClearButton = NSButton(title: "Clear", target: nil, action: nil)
+	private let chatStatusLabel = NSTextField(labelWithString: "")
+	private let chatTextView = NSTextView()
+
 	private let logsTextView = NSTextView()
 	private let copyLogsButton = NSButton(title: "Copy logs", target: nil, action: nil)
+	private let openLogFileButton = NSButton(title: "Open log file", target: nil, action: nil)
+	private let revealLogFileButton = NSButton(title: "Reveal in Finder", target: nil, action: nil)
+	private let logFilePathLabel = NSTextField(labelWithString: "")
 
 	private var isRecordingHotkey = false
 	private var hotkeyMonitor: Any?
@@ -84,8 +98,7 @@ final class SettingsViewController: NSViewController, NSComboBoxDelegate {
 	}
 
 	override func loadView() {
-		view = NSView()
-		view.translatesAutoresizingMaskIntoConstraints = false
+		view = NSView(frame: NSRect(x: 0, y: 0, width: 520, height: 420))
 		setUpUI()
 		bind()
 	}
@@ -106,18 +119,42 @@ final class SettingsViewController: NSViewController, NSComboBoxDelegate {
 	}
 
 	private func setUpUI() {
+		let scroll = NSScrollView()
+		scroll.hasVerticalScroller = true
+		scroll.drawsBackground = false
+		scroll.borderType = .noBorder
+		scroll.translatesAutoresizingMaskIntoConstraints = false
+		view.addSubview(scroll)
+
+		NSLayoutConstraint.activate([
+			scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+			scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+			scroll.topAnchor.constraint(equalTo: view.topAnchor),
+			scroll.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+		])
+
+		let document = NSView()
+		document.translatesAutoresizingMaskIntoConstraints = false
+		scroll.documentView = document
+
 		let root = NSStackView()
 		root.orientation = .vertical
 		root.alignment = .leading
 		root.spacing = 18
 		root.translatesAutoresizingMaskIntoConstraints = false
-		view.addSubview(root)
+		document.addSubview(root)
 
 		NSLayoutConstraint.activate([
-			root.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
-			root.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
-			root.topAnchor.constraint(equalTo: view.topAnchor, constant: 16),
-			root.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor, constant: -16),
+			document.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
+			document.trailingAnchor.constraint(equalTo: scroll.contentView.trailingAnchor),
+			document.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
+			document.bottomAnchor.constraint(equalTo: scroll.contentView.bottomAnchor),
+			document.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
+
+			root.leadingAnchor.constraint(equalTo: document.leadingAnchor, constant: 16),
+			root.trailingAnchor.constraint(equalTo: document.trailingAnchor, constant: -16),
+			root.topAnchor.constraint(equalTo: document.topAnchor, constant: 16),
+			root.bottomAnchor.constraint(equalTo: document.bottomAnchor, constant: -16),
 		])
 
 		root.addArrangedSubview(sectionTitle("Push-to-talk"))
@@ -128,6 +165,9 @@ final class SettingsViewController: NSViewController, NSComboBoxDelegate {
 
 		root.addArrangedSubview(sectionTitle("Gemini"))
 		root.addArrangedSubview(modelSection())
+
+		root.addArrangedSubview(sectionTitle("Ask AI"))
+		root.addArrangedSubview(chatSection())
 
 		root.addArrangedSubview(sectionTitle("Logs"))
 		root.addArrangedSubview(logsSection())
@@ -168,12 +208,22 @@ final class SettingsViewController: NSViewController, NSComboBoxDelegate {
 		enableMicrophoneButton.target = self
 		enableMicrophoneButton.action = #selector(enableMicrophone)
 
-		permissionButtonsRow.orientation = .horizontal
-		permissionButtonsRow.alignment = .centerY
-		permissionButtonsRow.spacing = 10
-		permissionButtonsRow.addArrangedSubview(enableAccessibilityButton)
-		permissionButtonsRow.addArrangedSubview(enableInputMonitoringButton)
-		permissionButtonsRow.addArrangedSubview(retryHotkeyButton)
+		revealAppButton.target = self
+		revealAppButton.action = #selector(revealAppInFinder)
+
+		[accessibilityStatusLabel, inputMonitoringStatusLabel, hotkeyListenerStatusLabel].forEach { label in
+			label.textColor = .secondaryLabelColor
+			label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+			label.lineBreakMode = .byTruncatingTail
+		}
+
+		permissionButtonsRow.orientation = .vertical
+		permissionButtonsRow.alignment = .leading
+		permissionButtonsRow.spacing = 8
+
+		permissionButtonsRow.addArrangedSubview(permissionRow(button: enableAccessibilityButton, statusLabel: accessibilityStatusLabel))
+		permissionButtonsRow.addArrangedSubview(permissionRow(button: enableInputMonitoringButton, statusLabel: inputMonitoringStatusLabel))
+		permissionButtonsRow.addArrangedSubview(permissionRow(button: retryHotkeyButton, statusLabel: hotkeyListenerStatusLabel))
 
 		hotkeyErrorLabel.textColor = .systemRed
 		hotkeyErrorLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
@@ -181,22 +231,50 @@ final class SettingsViewController: NSViewController, NSComboBoxDelegate {
 		hotkeyErrorLabel.maximumNumberOfLines = 3
 		hotkeyErrorLabel.isHidden = true
 
-		permissionsStatusLabel.textColor = .secondaryLabelColor
-		permissionsStatusLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+		permissionsStatusLabel.isHidden = true
 
 		microphoneStatusLabel.textColor = .secondaryLabelColor
 		microphoneStatusLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+
+		installWarningLabel.textColor = .systemOrange
+		installWarningLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+		installWarningLabel.lineBreakMode = .byWordWrapping
+		installWarningLabel.maximumNumberOfLines = 2
+		installWarningLabel.isHidden = true
+
+		revealAppButton.isHidden = true
 
 		container.addArrangedSubview(hotkeyRow)
 		container.addArrangedSubview(consumeEventsCheckbox)
 		container.addArrangedSubview(autoPasteCheckbox)
 		container.addArrangedSubview(microphoneStatusLabel)
 		container.addArrangedSubview(enableMicrophoneButton)
+		container.addArrangedSubview(installWarningLabel)
+		container.addArrangedSubview(revealAppButton)
 		container.addArrangedSubview(permissionButtonsRow)
-		container.addArrangedSubview(permissionsStatusLabel)
 		container.addArrangedSubview(hotkeyErrorLabel)
 
 		return container
+	}
+
+	private func permissionRow(button: NSButton, statusLabel: NSTextField) -> NSView {
+		let row = NSStackView()
+		row.orientation = .horizontal
+		row.alignment = .centerY
+		row.spacing = 10
+
+		button.setContentHuggingPriority(.required, for: .horizontal)
+		statusLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+		row.addArrangedSubview(button)
+		row.addArrangedSubview(statusLabel)
+
+		let spacer = NSView()
+		spacer.translatesAutoresizingMaskIntoConstraints = false
+		spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+		spacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+		row.addArrangedSubview(spacer)
+		return row
 	}
 
 	private func apiKeySection() -> NSView {
@@ -208,7 +286,7 @@ final class SettingsViewController: NSViewController, NSComboBoxDelegate {
 		apiKeyField.placeholderString = "Paste your Gemini API key"
 		apiKeyField.translatesAutoresizingMaskIntoConstraints = false
 		NSLayoutConstraint.activate([
-			apiKeyField.widthAnchor.constraint(equalToConstant: 420),
+			apiKeyField.widthAnchor.constraint(equalToConstant: 360),
 		])
 
 		apiKeySaveButton.target = self
@@ -241,7 +319,6 @@ final class SettingsViewController: NSViewController, NSComboBoxDelegate {
 		buttonsRow.spacing = 10
 		buttonsRow.addArrangedSubview(apiKeySaveButton)
 		buttonsRow.addArrangedSubview(apiKeyRemoveButton)
-		buttonsRow.addArrangedSubview(apiKeyCheckButton)
 
 		let spacer = NSView()
 		spacer.translatesAutoresizingMaskIntoConstraints = false
@@ -261,12 +338,77 @@ final class SettingsViewController: NSViewController, NSComboBoxDelegate {
 		apiKeyErrorLabel.maximumNumberOfLines = 3
 		apiKeyErrorLabel.isHidden = true
 
-		container.addArrangedSubview(apiKeyField)
+		let keyRow = NSStackView()
+		keyRow.orientation = .horizontal
+		keyRow.alignment = .centerY
+		keyRow.spacing = 10
+		keyRow.addArrangedSubview(apiKeyField)
+		keyRow.addArrangedSubview(apiKeyCheckButton)
+
+		container.addArrangedSubview(apiKeyLinkButton)
+		container.addArrangedSubview(keyRow)
 		container.addArrangedSubview(buttonsRow)
 		container.addArrangedSubview(apiKeyValidityLabel)
-		container.addArrangedSubview(apiKeyLinkButton)
 		container.addArrangedSubview(apiKeyErrorLabel)
 
+		return container
+	}
+
+	private func chatSection() -> NSView {
+		let container = NSStackView()
+		container.orientation = .vertical
+		container.alignment = .leading
+		container.spacing = 10
+
+		chatField.placeholderString = "Ask something…"
+		chatField.target = self
+		chatField.action = #selector(sendChat)
+		chatField.translatesAutoresizingMaskIntoConstraints = false
+		NSLayoutConstraint.activate([
+			chatField.widthAnchor.constraint(equalToConstant: 360),
+		])
+
+		chatSendButton.target = self
+		chatSendButton.action = #selector(sendChat)
+		chatClearButton.target = self
+		chatClearButton.action = #selector(clearChat)
+
+		let inputRow = NSStackView()
+		inputRow.orientation = .horizontal
+		inputRow.alignment = .centerY
+		inputRow.spacing = 10
+		inputRow.addArrangedSubview(chatField)
+		inputRow.addArrangedSubview(chatSendButton)
+		inputRow.addArrangedSubview(chatClearButton)
+
+		let scroll = NSScrollView()
+		scroll.hasVerticalScroller = true
+		scroll.borderType = .bezelBorder
+		scroll.translatesAutoresizingMaskIntoConstraints = false
+		NSLayoutConstraint.activate([
+			scroll.widthAnchor.constraint(equalToConstant: 460),
+			scroll.heightAnchor.constraint(equalToConstant: 140),
+		])
+
+		chatTextView.isEditable = false
+		chatTextView.isSelectable = true
+		chatTextView.font = NSFont.systemFont(ofSize: 12)
+		chatTextView.textContainerInset = NSSize(width: 10, height: 10)
+		chatTextView.isVerticallyResizable = true
+		chatTextView.isHorizontallyResizable = false
+		chatTextView.autoresizingMask = [.width]
+		chatTextView.textContainer?.widthTracksTextView = true
+		chatTextView.textContainer?.containerSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+		chatTextView.frame = NSRect(x: 0, y: 0, width: 460, height: 140)
+		scroll.documentView = chatTextView
+
+		chatStatusLabel.textColor = .secondaryLabelColor
+		chatStatusLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+		chatStatusLabel.stringValue = "Uses your Gemini API key and selected model."
+
+		container.addArrangedSubview(inputRow)
+		container.addArrangedSubview(scroll)
+		container.addArrangedSubview(chatStatusLabel)
 		return container
 	}
 
@@ -327,6 +469,13 @@ final class SettingsViewController: NSViewController, NSComboBoxDelegate {
 		logsTextView.isSelectable = true
 		logsTextView.drawsBackground = false
 		logsTextView.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+		logsTextView.isVerticallyResizable = true
+		logsTextView.isHorizontallyResizable = false
+		logsTextView.autoresizingMask = [.width]
+		logsTextView.textContainerInset = NSSize(width: 10, height: 10)
+		logsTextView.textContainer?.widthTracksTextView = true
+		logsTextView.textContainer?.containerSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+		logsTextView.frame = NSRect(x: 0, y: 0, width: 480, height: 140)
 		scroll.documentView = logsTextView
 
 		NSLayoutConstraint.activate([
@@ -337,8 +486,28 @@ final class SettingsViewController: NSViewController, NSComboBoxDelegate {
 		copyLogsButton.target = self
 		copyLogsButton.action = #selector(copyLogs)
 
+		openLogFileButton.target = self
+		openLogFileButton.action = #selector(openLogFile)
+
+		revealLogFileButton.target = self
+		revealLogFileButton.action = #selector(revealLogFile)
+
+		logFilePathLabel.textColor = .secondaryLabelColor
+		logFilePathLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+		logFilePathLabel.lineBreakMode = .byTruncatingMiddle
+		logFilePathLabel.maximumNumberOfLines = 1
+
+		let buttonsRow = NSStackView()
+		buttonsRow.orientation = .horizontal
+		buttonsRow.alignment = .centerY
+		buttonsRow.spacing = 10
+		buttonsRow.addArrangedSubview(copyLogsButton)
+		buttonsRow.addArrangedSubview(openLogFileButton)
+		buttonsRow.addArrangedSubview(revealLogFileButton)
+
 		container.addArrangedSubview(scroll)
-		container.addArrangedSubview(copyLogsButton)
+		container.addArrangedSubview(buttonsRow)
+		container.addArrangedSubview(logFilePathLabel)
 		return container
 	}
 
@@ -431,9 +600,13 @@ final class SettingsViewController: NSViewController, NSComboBoxDelegate {
 		seedModelList()
 		modelComboBox.stringValue = settings.geminiModelName
 		modelStatusLabel.stringValue = "Tip: click “Refresh models” to load from your API key."
-		updatePermissionUI()
-		updatePermissionStatusLabel()
-		updateMicrophoneUI()
+			updatePermissionUI()
+			updatePermissionStatusLabel()
+			updateMicrophoneUI()
+			updateInstallWarningUI()
+
+		chatSendButton.keyEquivalent = "\r"
+		chatTextView.string = ""
 
 		logsCancellable = LogStore.shared.$lines
 			.receive(on: RunLoop.main)
@@ -442,6 +615,12 @@ final class SettingsViewController: NSViewController, NSComboBoxDelegate {
 				self.logsTextView.string = lines.joined(separator: "\n")
 				self.logsTextView.scrollToEndOfDocument(nil)
 			}
+
+		if let url = LogStore.shared.logFileURL() {
+			logFilePathLabel.stringValue = "Log file: \(url.path)"
+		} else {
+			logFilePathLabel.stringValue = "Log file: (unavailable)"
+		}
 	}
 
 	private func updatePermissionUI() {
@@ -449,14 +628,23 @@ final class SettingsViewController: NSViewController, NSComboBoxDelegate {
 		let im = InputMonitoringPermission.isTrusted()
 		let hotkey = hotkeyManager.isRunning
 
-		enableAccessibilityButton.isHidden = ax
-		// Only suggest IM once AX is granted (otherwise it's just noise).
-		enableInputMonitoringButton.isHidden = !ax || im
-		retryHotkeyButton.isHidden = hotkey && ax
-
-		let showRow = (!ax) || (!im && ax) || (!hotkey)
-		permissionButtonsRow.isHidden = !showRow
 		updatePermissionStatusLabel()
+	}
+
+	private func updateInstallWarningUI() {
+		let bundlePath = Bundle.main.bundleURL.path
+		let looksLikeDerivedData = bundlePath.contains("/DerivedData/") || bundlePath.contains("/.derivedData/")
+		let isInApplications = bundlePath.hasPrefix("/Applications/")
+
+		if looksLikeDerivedData || !isInApplications {
+			installWarningLabel.isHidden = false
+			installWarningLabel.stringValue =
+				"Tip: for macOS 15 permissions, run PKdictation from /Applications (not from DerivedData)."
+			revealAppButton.isHidden = false
+		} else {
+			installWarningLabel.isHidden = true
+			revealAppButton.isHidden = true
+		}
 	}
 
 	private func updateMicrophoneUI() {
@@ -481,18 +669,16 @@ final class SettingsViewController: NSViewController, NSComboBoxDelegate {
 		let ax = AccessibilityPermission.isTrusted()
 		let im = InputMonitoringPermission.isTrusted()
 		let hotkey = hotkeyManager.isRunning
-		let axText = ax ? "✅ Accessibility: granted" : "❌ Accessibility: not granted"
-		let hotkeyText = hotkey ? "✅ Hotkey listener: running" : "❌ Hotkey listener: not running"
-		let imText: String
-		if im {
-			imText = "✅ Input Monitoring: granted"
-		} else if hotkey {
-			imText = "ℹ️ Input Monitoring: not granted (may be OK)"
+
+		accessibilityStatusLabel.stringValue = ax ? "✅ Granted" : "❌ Not granted"
+
+		if ax == false {
+			inputMonitoringStatusLabel.stringValue = "ℹ️ Grant Accessibility first"
 		} else {
-			imText = "❌ Input Monitoring: not granted (may be required)"
+			inputMonitoringStatusLabel.stringValue = im ? "✅ Granted" : "❌ Not granted"
 		}
 
-		permissionsStatusLabel.stringValue = "\(axText)   \(imText)   \(hotkeyText)"
+		hotkeyListenerStatusLabel.stringValue = hotkey ? "✅ Running" : "❌ Not running"
 	}
 
 	@objc private func toggleHotkeyRecording() {
@@ -608,6 +794,11 @@ final class SettingsViewController: NSViewController, NSComboBoxDelegate {
 		}
 	}
 
+	@objc private func revealAppInFinder() {
+		let url = Bundle.main.bundleURL
+		NSWorkspace.shared.activateFileViewerSelecting([url])
+	}
+
 	@objc private func openApiKeysPage() {
 		guard let url = URL(string: "https://aistudio.google.com/api-keys") else { return }
 		NSWorkspace.shared.open(url)
@@ -658,6 +849,54 @@ final class SettingsViewController: NSViewController, NSComboBoxDelegate {
 		}
 	}
 
+	@objc private func clearChat() {
+		chatTextView.string = ""
+		chatStatusLabel.stringValue = "Cleared."
+	}
+
+	@objc private func sendChat() {
+		let prompt = chatField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard prompt.isEmpty == false else { return }
+
+		guard let apiKey = settings.loadGeminiApiKey(), apiKey.isEmpty == false else {
+			chatStatusLabel.stringValue = "Missing Gemini API key. Add it above first."
+			return
+		}
+
+		let modelName = settings.geminiModelName
+		chatSendButton.isEnabled = false
+		chatStatusLabel.stringValue = "Thinking…"
+
+		appendChat(role: "You", text: prompt)
+		chatField.stringValue = ""
+
+		Task { @MainActor in
+			defer { self.chatSendButton.isEnabled = true }
+			do {
+				let answer = try await GeminiClient().chat(prompt: prompt, apiKey: apiKey, modelName: modelName)
+				self.appendChat(role: "AI", text: answer)
+				self.chatStatusLabel.stringValue = "OK"
+				LogStore.shared.log("Chat OK (\(answer.count) chars).")
+			} catch {
+				self.chatStatusLabel.stringValue = "Error: \(error.localizedDescription)"
+				self.appendChat(role: "Error", text: error.localizedDescription)
+				if let detailed = (error as? LocalizedError)?.failureReason, detailed.isEmpty == false {
+					self.appendChat(role: "Details", text: detailed)
+				}
+				LogStore.shared.log("Chat failed: \(error.localizedDescription)")
+			}
+		}
+	}
+
+	private func appendChat(role: String, text: String) {
+		let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard cleaned.isEmpty == false else { return }
+		let existing = chatTextView.string
+		let line = "\(role): \(cleaned)"
+		chatTextView.string = existing.isEmpty ? line : (existing + "\n\n" + line)
+		chatTextView.scrollToEndOfDocument(nil)
+	}
+
 	@objc private func checkApiKey() {
 		apiKeyErrorLabel.isHidden = true
 		apiKeyValidityLabel.stringValue = "Checking key…"
@@ -694,6 +933,16 @@ final class SettingsViewController: NSViewController, NSComboBoxDelegate {
 		let pb = NSPasteboard.general
 		pb.clearContents()
 		pb.setString(LogStore.shared.dump(), forType: .string)
+	}
+
+	@objc private func openLogFile() {
+		guard let url = LogStore.shared.logFileURL() else { return }
+		NSWorkspace.shared.open(url)
+	}
+
+	@objc private func revealLogFile() {
+		guard let url = LogStore.shared.logFileURL() else { return }
+		NSWorkspace.shared.activateFileViewerSelecting([url])
 	}
 
 	private var pendingApiKeySaveWorkItem: DispatchWorkItem?

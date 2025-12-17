@@ -16,6 +16,9 @@ final class HotkeyManager: ObservableObject {
 	private var consumeEvents: Bool
 	private var isPressed: Bool = false
 	private var lastPressTime: TimeInterval = 0
+	private var inputMonitoringTrustedCached: Bool = false
+	private var lastInputMonitoringTrustedCheck: TimeInterval = 0
+	private let inputMonitoringTrustedCheckInterval: TimeInterval = 2.0
 
 	private var eventTap: CFMachPort?
 	private var runLoopSource: CFRunLoopSource?
@@ -66,12 +69,19 @@ final class HotkeyManager: ObservableObject {
 			Task { @MainActor in
 				LogStore.shared.log("Hotkey listener failed to start (AX=\(axStatus), IM=\(imStatus)).")
 			}
+			Task { @MainActor in
+				if axTrusted == false { AccessibilityPermission.requestPrompt() }
+				if imTrusted == false { InputMonitoringPermission.requestPrompt() }
+			}
 			return
 		}
 
 		let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
 		CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
 		CGEvent.tapEnable(tap: tap, enable: true)
+
+		inputMonitoringTrustedCached = InputMonitoringPermission.isTrusted()
+		lastInputMonitoringTrustedCheck = CFAbsoluteTimeGetCurrent()
 
 		eventTap = tap
 		runLoopSource = source
@@ -122,6 +132,7 @@ final class HotkeyManager: ObservableObject {
 
 		let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
 		let currentMods = Self.modifierFlags(from: event.flags)
+		let now = CFAbsoluteTimeGetCurrent()
 
 		if type == .flagsChanged {
 			lock.lock()
@@ -141,12 +152,14 @@ final class HotkeyManager: ObservableObject {
 		let action: Action
 		let shouldConsume: Bool
 		let userIsTypingInApp = Self.userIsTypingInApp()
+		let inputMonitoringTrusted = inputMonitoringTrusted(now: now)
 		lock.lock()
 		action = Self.actionForEvent(
 			type: type,
 			keyCode: keyCode,
 			currentModifiers: currentMods,
 			hotkey: hotkey,
+			inputMonitoringTrusted: inputMonitoringTrusted,
 			isPressed: &isPressed,
 			event: event
 		)
@@ -177,6 +190,26 @@ final class HotkeyManager: ObservableObject {
 		}
 
 		return Unmanaged.passRetained(event)
+	}
+
+	private func inputMonitoringTrusted(now: TimeInterval) -> Bool {
+		lock.lock()
+		let needsRefresh = (now - lastInputMonitoringTrustedCheck) >= inputMonitoringTrustedCheckInterval
+		lock.unlock()
+
+		if needsRefresh {
+			let current = InputMonitoringPermission.isTrusted()
+			lock.lock()
+			inputMonitoringTrustedCached = current
+			lastInputMonitoringTrustedCheck = now
+			lock.unlock()
+			return current
+		}
+
+		lock.lock()
+		let cached = inputMonitoringTrustedCached
+		lock.unlock()
+		return cached
 	}
 
 	private static func userIsTypingInApp() -> Bool {
@@ -231,13 +264,14 @@ final class HotkeyManager: ObservableObject {
 		keyCode: UInt16,
 		currentModifiers: NSEvent.ModifierFlags,
 		hotkey: Hotkey,
+		inputMonitoringTrusted: Bool,
 		isPressed: inout Bool,
 		event: CGEvent
 	) -> Action {
 		var relevantCurrent = currentModifiers.intersection(Hotkey.relevantModifiers)
 
 		// Fn is often reported inconsistently via flags; treat it specially.
-		let fnDown = fnIsDownNow(event: event)
+		let fnDown = fnIsDownNow(event: event, inputMonitoringTrusted: inputMonitoringTrusted)
 		if fnDown {
 			relevantCurrent.insert(.function)
 		} else {
@@ -255,7 +289,8 @@ final class HotkeyManager: ObservableObject {
 					requiredKeyCode: requiredKeyCode,
 					event: event,
 					currentModifiers: currentModifiers,
-					modifiersMatch: modifiersMatch
+					modifiersMatch: modifiersMatch,
+					inputMonitoringTrusted: inputMonitoringTrusted
 				)
 
 				if activeNow && !isPressed {
@@ -330,12 +365,13 @@ final class HotkeyManager: ObservableObject {
 		requiredKeyCode: UInt16,
 		event: CGEvent,
 		currentModifiers: NSEvent.ModifierFlags,
-		modifiersMatch: Bool
+		modifiersMatch: Bool,
+		inputMonitoringTrusted: Bool
 	) -> Bool {
 		guard let mod = Hotkey.modifierFlag(forKeyCode: requiredKeyCode) else { return false }
 
 		if requiredKeyCode == UInt16(kVK_Function) {
-			return fnIsDownNow(event: event) && modifiersMatch
+			return fnIsDownNow(event: event, inputMonitoringTrusted: inputMonitoringTrusted) && modifiersMatch
 		}
 
 		let mask: CGEventFlags
@@ -365,9 +401,9 @@ final class HotkeyManager: ObservableObject {
 		return currentModifiers.contains(mod) && modifiersMatch
 	}
 
-	private static func fnIsDownNow(event: CGEvent) -> Bool {
+	private static func fnIsDownNow(event: CGEvent, inputMonitoringTrusted: Bool) -> Bool {
 		if event.flags.contains(.maskSecondaryFn) { return true }
-		if InputMonitoringPermission.isTrusted() {
+		if inputMonitoringTrusted {
 			return CGEventSource.keyState(.combinedSessionState, key: CGKeyCode(kVK_Function))
 		}
 		return false

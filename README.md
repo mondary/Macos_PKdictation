@@ -32,11 +32,23 @@ Permissions nécessaires :
 - **Microphone** (demandé au 1er enregistrement)
 - **Privacy & Security → Accessibility** (et parfois **Input Monitoring**) pour le hotkey global
 
+### macOS 15 (conseil important)
+
+Pour que macOS te propose plus facilement **PKdictation** dans les listes **Accessibilité / Input Monitoring**, lance l’app depuis un emplacement “stable” :
+
+1. `make export`
+2. Copie `dist/PKdictation.app` dans `/Applications`
+3. Lance-la depuis `/Applications`, puis redemande les permissions (Settings → Push-to-talk)
+
 ## Usage
 
 - Hold your push-to-talk shortcut (default `Fn`) to record.
 - Release to send the audio to Gemini and get the transcript.
 - The transcript is displayed in the overlay and copied to the clipboard.
+
+## Dépannage (phrase tronquée à la fin)
+
+Si tu constates que la fin de tes phrases est parfois coupée, l’app ajoute maintenant un petit “tail padding” (≈250ms) avant de fermer le fichier audio, puis attend brièvement (≈120ms) avant de lire/transcrire. Tu peux vérifier dans **Settings → Logs** que la ligne `Stop: keeping 250ms tail...` apparaît.
 
 ## Build (CLI)
 

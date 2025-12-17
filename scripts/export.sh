@@ -17,3 +17,5 @@ rm -rf "$APP_DEST"
 ditto "$APP_SRC" "$APP_DEST"
 
 echo "Exported app: $APP_DEST"
+echo "Tip (macOS 15 permissions): copy to /Applications and launch from there:"
+echo "  cp -R \"$APP_DEST\" /Applications/"
