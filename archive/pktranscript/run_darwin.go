@@ -27,8 +27,7 @@ static NSString *gLatestTranscript = @"";
 
 static NSStatusItem *gStatusItem = nil;
 static CFMachPortRef gEventTap = NULL;
-static NSMenuItem *gStartItem = nil;
-static NSMenuItem *gStopItem = nil;
+static NSMenuItem *gRecordToggleItem = nil;
 static NSMenuItem *gTranscriptToggleItem = nil;
 static NSMenuItem *gTranscriptItem = nil;
 static NSMenuItem *gCopyTranscriptItem = nil;
@@ -48,13 +47,9 @@ static void copyToClipboard(NSString *text);
 @end
 
 @implementation MenuHandler
-- (void)menuStart:(id)sender {
+- (void)menuToggleRecord:(id)sender {
 	(void)sender;
-	startRecording();
-}
-- (void)menuStop:(id)sender {
-	(void)sender;
-	stopRecording();
+	if (gIsRecording) stopRecording(); else startRecording();
 }
 - (void)menuToggleTranscript:(id)sender {
 	(void)sender;
@@ -144,8 +139,10 @@ static NSString *truncateTranscript(NSString *s) {
 }
 
 static void updateMenuState(void) {
-	if (gStartItem) gStartItem.enabled = !gIsRecording;
-	if (gStopItem) gStopItem.enabled = gIsRecording;
+	if (gRecordToggleItem) {
+		gRecordToggleItem.enabled = YES;
+		gRecordToggleItem.title = gIsRecording ? @"Stop" : @"Start";
+	}
 	if (gTranscriptToggleItem) gTranscriptToggleItem.state = gAutoPasteEnabled ? NSControlStateValueOn : NSControlStateValueOff;
 
 	if (gTranscriptItem) {
@@ -293,13 +290,9 @@ static void setupStatusBar(void) {
 	// Menu handler implemented below.
 	gMenuHandler = [MenuHandler new];
 
-	gStartItem = [[NSMenuItem alloc] initWithTitle:@"Start" action:@selector(menuStart:) keyEquivalent:@""];
-	gStartItem.target = gMenuHandler;
-	[menu addItem:gStartItem];
-
-	gStopItem = [[NSMenuItem alloc] initWithTitle:@"Stop" action:@selector(menuStop:) keyEquivalent:@""];
-	gStopItem.target = gMenuHandler;
-	[menu addItem:gStopItem];
+	gRecordToggleItem = [[NSMenuItem alloc] initWithTitle:@"Start" action:@selector(menuToggleRecord:) keyEquivalent:@""];
+	gRecordToggleItem.target = gMenuHandler;
+	[menu addItem:gRecordToggleItem];
 
 	gHotkeyItem = [[NSMenuItem alloc] initWithTitle:hotkeyTitle() action:nil keyEquivalent:@""];
 	gHotkeyItem.enabled = NO;
