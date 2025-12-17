@@ -26,11 +26,14 @@ static AVAudioEngine *gEngine = nil;
 static NSString *gLatestTranscript = @"";
 static NSMutableArray<NSString *> *gTranscriptHistory = nil;
 static bool gDidCommitTranscript = false;
+static CGFloat gMaxMenuTextWidth = 280.0;
+static NSString *gLocaleIdentifier = @"";
 
 static NSStatusItem *gStatusItem = nil;
 static CFMachPortRef gEventTap = NULL;
 static NSMenuItem *gTranscriptToggleItem = nil;
 static NSMenuItem *gHotkeyItem = nil;
+static NSMenuItem *gSettingsItem = nil;
 static NSMenuItem *gHistoryHeaderItem = nil;
 static NSMenuItem *gHistoryItems[10] = { nil };
 static id gMenuHandler = nil;
@@ -38,6 +41,10 @@ static id gFlagsChangedMonitor = nil;
 static id gFlagsChangedLocalMonitor = nil;
 static BOOL gFnIsDown = NO;
 static BOOL gDidShowAccessibilityAlert = NO;
+static NSWindow *gSettingsWindow = nil;
+static NSButton *gSettingsAutoPasteCheckbox = nil;
+static NSSlider *gSettingsMenuWidthSlider = nil;
+static NSTextField *gSettingsMenuWidthValueLabel = nil;
 
 static void startRecording(void);
 static void stopRecording(void);
@@ -45,6 +52,7 @@ static void updateMenuState(void);
 static void copyToClipboard(NSString *text);
 static void reopenMenuSoon(void);
 static void addTranscriptToHistory(NSString *text);
+static void showSettingsWindow(void);
 
 @interface MenuHandler : NSObject
 @end
@@ -53,6 +61,25 @@ static void addTranscriptToHistory(NSString *text);
 - (void)menuToggleTranscript:(id)sender {
 	(void)sender;
 	gAutoPasteEnabled = !gAutoPasteEnabled;
+	updateMenuState();
+}
+- (void)menuOpenSettings:(id)sender {
+	(void)sender;
+	showSettingsWindow();
+}
+- (void)settingsToggleAutoPaste:(id)sender {
+	NSButton *b = (NSButton *)sender;
+	if (![b isKindOfClass:[NSButton class]]) return;
+	gAutoPasteEnabled = (b.state == NSControlStateValueOn);
+	updateMenuState();
+}
+- (void)settingsMenuWidthChanged:(id)sender {
+	NSSlider *s = (NSSlider *)sender;
+	if (![s isKindOfClass:[NSSlider class]]) return;
+	gMaxMenuTextWidth = round(s.doubleValue);
+	if (gSettingsMenuWidthValueLabel) {
+		gSettingsMenuWidthValueLabel.stringValue = [NSString stringWithFormat:@"%.0f px", gMaxMenuTextWidth];
+	}
 	updateMenuState();
 }
 - (void)menuCopyHistory:(id)sender {
@@ -208,8 +235,8 @@ static void addTranscriptToHistory(NSString *text) {
 }
 
 static void updateMenuState(void) {
-	const CGFloat kMaxMenuTextWidth = 280.0;
 	if (gTranscriptToggleItem) gTranscriptToggleItem.state = gAutoPasteEnabled ? NSControlStateValueOn : NSControlStateValueOff;
+	if (gSettingsAutoPasteCheckbox) gSettingsAutoPasteCheckbox.state = gAutoPasteEnabled ? NSControlStateValueOn : NSControlStateValueOff;
 
 	BOOL hasHistory = (gTranscriptHistory && gTranscriptHistory.count > 0);
 	if (gHistoryHeaderItem) {
@@ -226,7 +253,7 @@ static void updateMenuState(void) {
 		}
 		NSString *entry = gTranscriptHistory[i];
 		NSString *full = [NSString stringWithFormat:@"%d. %@", i + 1, entry];
-		it.title = truncateStringToMenuWidth(full, kMaxMenuTextWidth);
+		it.title = truncateStringToMenuWidth(full, gMaxMenuTextWidth);
 		it.representedObject = entry;
 		it.enabled = YES;
 		it.hidden = NO;
@@ -236,6 +263,95 @@ static void updateMenuState(void) {
 static NSString *hotkeyTitle(void) {
 	if (gHotKeyCode == (uint16_t)kVK_Function) return @"Raccourci : Fn (maintenir)";
 	return [NSString stringWithFormat:@"Raccourci : keycode 0x%X", (unsigned)gHotKeyCode];
+}
+
+static void showSettingsWindow(void) {
+	if (gSettingsWindow) {
+		updateMenuState();
+		if (gSettingsMenuWidthSlider) gSettingsMenuWidthSlider.doubleValue = gMaxMenuTextWidth;
+		if (gSettingsMenuWidthValueLabel) gSettingsMenuWidthValueLabel.stringValue = [NSString stringWithFormat:@"%.0f px", gMaxMenuTextWidth];
+		[NSApp activateIgnoringOtherApps:YES];
+		[gSettingsWindow makeKeyAndOrderFront:gSettingsWindow];
+		return;
+	}
+
+	NSRect frame = NSMakeRect(0, 0, 460, 280);
+	NSWindowStyleMask style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable;
+	gSettingsWindow = [[NSWindow alloc] initWithContentRect:frame styleMask:style backing:NSBackingStoreBuffered defer:NO];
+	gSettingsWindow.title = @"PKTranscript — Settings";
+	gSettingsWindow.releasedWhenClosed = NO;
+
+	NSView *content = gSettingsWindow.contentView;
+
+	NSTextField *title = [NSTextField labelWithString:@"Paramètres"];
+	title.font = [NSFont boldSystemFontOfSize:18];
+	title.translatesAutoresizingMaskIntoConstraints = NO;
+	[content addSubview:title];
+
+	NSString *hotkey = hotkeyTitle() ?: @"";
+	NSString *locale = (gLocaleIdentifier && gLocaleIdentifier.length > 0) ? gLocaleIdentifier : @"system";
+	NSTextField *subtitle = [NSTextField labelWithString:[NSString stringWithFormat:@"%@\nLocale : %@", hotkey, locale]];
+	subtitle.font = [NSFont systemFontOfSize:12];
+	subtitle.textColor = [NSColor secondaryLabelColor];
+	subtitle.lineBreakMode = NSLineBreakByWordWrapping;
+	subtitle.translatesAutoresizingMaskIntoConstraints = NO;
+	[content addSubview:subtitle];
+
+	gSettingsAutoPasteCheckbox = [NSButton checkboxWithTitle:@"Auto-paste (Cmd+V) après relâchement" target:gMenuHandler action:@selector(settingsToggleAutoPaste:)];
+	gSettingsAutoPasteCheckbox.state = gAutoPasteEnabled ? NSControlStateValueOn : NSControlStateValueOff;
+	gSettingsAutoPasteCheckbox.translatesAutoresizingMaskIntoConstraints = NO;
+	[content addSubview:gSettingsAutoPasteCheckbox];
+
+	NSTextField *widthLabel = [NSTextField labelWithString:@"Largeur max (menu historique)"];
+	widthLabel.translatesAutoresizingMaskIntoConstraints = NO;
+	[content addSubview:widthLabel];
+
+	gSettingsMenuWidthValueLabel = [NSTextField labelWithString:[NSString stringWithFormat:@"%.0f px", gMaxMenuTextWidth]];
+	gSettingsMenuWidthValueLabel.textColor = [NSColor secondaryLabelColor];
+	gSettingsMenuWidthValueLabel.translatesAutoresizingMaskIntoConstraints = NO;
+	[content addSubview:gSettingsMenuWidthValueLabel];
+
+	gSettingsMenuWidthSlider = [NSSlider sliderWithValue:gMaxMenuTextWidth minValue:180 maxValue:420 target:gMenuHandler action:@selector(settingsMenuWidthChanged:)];
+	gSettingsMenuWidthSlider.translatesAutoresizingMaskIntoConstraints = NO;
+	[content addSubview:gSettingsMenuWidthSlider];
+
+	NSTextField *placeholder = [NSTextField labelWithString:@"Autres réglages (raccourci, locale, etc.) : à venir"];
+	placeholder.textColor = [NSColor tertiaryLabelColor];
+	placeholder.font = [NSFont systemFontOfSize:12];
+	placeholder.translatesAutoresizingMaskIntoConstraints = NO;
+	[content addSubview:placeholder];
+
+	[NSLayoutConstraint activateConstraints:@[
+		[title.topAnchor constraintEqualToAnchor:content.topAnchor constant:18],
+		[title.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
+		[title.trailingAnchor constraintLessThanOrEqualToAnchor:content.trailingAnchor constant:-18],
+
+		[subtitle.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:6],
+		[subtitle.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
+		[subtitle.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
+
+		[gSettingsAutoPasteCheckbox.topAnchor constraintEqualToAnchor:subtitle.bottomAnchor constant:16],
+		[gSettingsAutoPasteCheckbox.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
+		[gSettingsAutoPasteCheckbox.trailingAnchor constraintLessThanOrEqualToAnchor:content.trailingAnchor constant:-18],
+
+		[widthLabel.topAnchor constraintEqualToAnchor:gSettingsAutoPasteCheckbox.bottomAnchor constant:18],
+		[widthLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
+
+		[gSettingsMenuWidthValueLabel.centerYAnchor constraintEqualToAnchor:widthLabel.centerYAnchor],
+		[gSettingsMenuWidthValueLabel.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
+
+		[gSettingsMenuWidthSlider.topAnchor constraintEqualToAnchor:widthLabel.bottomAnchor constant:8],
+		[gSettingsMenuWidthSlider.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
+		[gSettingsMenuWidthSlider.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
+
+		[placeholder.topAnchor constraintEqualToAnchor:gSettingsMenuWidthSlider.bottomAnchor constant:18],
+		[placeholder.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
+		[placeholder.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
+	]];
+
+	[gSettingsWindow center];
+	[NSApp activateIgnoringOtherApps:YES];
+	[gSettingsWindow makeKeyAndOrderFront:gSettingsWindow];
 }
 
 static void stopRecording(void) {
@@ -384,6 +500,10 @@ static void setupStatusBar(void) {
 	gTranscriptToggleItem.target = gMenuHandler;
 	[menu addItem:gTranscriptToggleItem];
 
+	gSettingsItem = [[NSMenuItem alloc] initWithTitle:@"Settings…" action:@selector(menuOpenSettings:) keyEquivalent:@","];
+	gSettingsItem.target = gMenuHandler;
+	[menu addItem:gSettingsItem];
+
 	[menu addItem:[NSMenuItem separatorItem]];
 
 	gHistoryHeaderItem = [[NSMenuItem alloc] initWithTitle:@"Historique (10)" action:nil keyEquivalent:@""];
@@ -430,6 +550,7 @@ static void runApp(const char *localeCString) {
 		if (localeCString && strlen(localeCString) > 0) {
 			locale = [NSString stringWithUTF8String:localeCString];
 		}
+		gLocaleIdentifier = locale ?: @"";
 		if (locale) {
 			gRecognizer = [[SFSpeechRecognizer alloc] initWithLocale:[NSLocale localeWithLocaleIdentifier:locale]];
 		} else {
