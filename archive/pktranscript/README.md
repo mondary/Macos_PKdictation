@@ -47,3 +47,8 @@ dist/PKTranscript.app/Contents/MacOS/pktranscript --hotkey f7 --locale fr-FR
 ```
 
 `--hotkey` accepte aussi un keycode macOS (ex: `0x61` pour F6).
+
+Hotkeys utiles (push-to-talk) :
+- `fn` (maintenir)
+- `rcmd` / `cmd` (maintenir)
+- `ropt` / `lopt` (maintenir)

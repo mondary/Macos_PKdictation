@@ -3,9 +3,22 @@
 <plist version="1.0">
 <dict>
 	<key>files</key>
-	<dict/>
+	<dict>
+		<key>Resources/PKTranscript.icns</key>
+		<data>
+		kGHWzGYyusMxYl3SxjgyIk8g9XQ=
+		</data>
+	</dict>
 	<key>files2</key>
-	<dict/>
+	<dict>
+		<key>Resources/PKTranscript.icns</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			OW4n5XsXLkV2aSiVhF/6b4deyth2/NAuDek82tb0F94=
+			</data>
+		</dict>
+	</dict>
 	<key>rules</key>
 	<dict>
 		<key>^Resources/</key>

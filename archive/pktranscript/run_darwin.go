@@ -31,63 +31,109 @@ static NSString *gLocaleIdentifier = @"";
 
 static NSStatusItem *gStatusItem = nil;
 static CFMachPortRef gEventTap = NULL;
-static NSMenuItem *gTranscriptToggleItem = nil;
-static NSMenuItem *gHotkeyItem = nil;
-static NSMenuItem *gSettingsItem = nil;
-static NSMenuItem *gHistoryHeaderItem = nil;
-static NSMenuItem *gHistoryItems[10] = { nil };
+typedef NS_ENUM(NSInteger, PKTGlassTheme) {
+	PKTGlassThemeLight = 0,
+	PKTGlassThemeDark = 1,
+};
+static NSInteger gGlassTheme = PKTGlassThemeDark;
+static NSImage *gStatusBaseIcon = nil;
+static NSPopover *gPopover = nil;
+static NSVisualEffectView *gPopoverBackground = nil;
+static NSTextField *gPopoverHotkeyLabel = nil;
+static NSButton *gPopoverAutoPasteCheckbox = nil;
+static NSButton *gPopoverSettingsButton = nil;
+static NSTextField *gPopoverHistoryHeader = nil;
+static NSButton *gPopoverHistoryButtons[10] = { nil };
+static NSButton *gPopoverQuitButton = nil;
+static NSStackView *gPopoverStack = nil;
 static id gMenuHandler = nil;
 static id gFlagsChangedMonitor = nil;
 static id gFlagsChangedLocalMonitor = nil;
-static BOOL gFnIsDown = NO;
+static BOOL gModifierIsDown = NO;
 static BOOL gDidShowAccessibilityAlert = NO;
 static NSWindow *gSettingsWindow = nil;
+static NSVisualEffectView *gSettingsBackground = nil;
+static NSView *gSettingsContent = nil;
 static NSButton *gSettingsAutoPasteCheckbox = nil;
 static NSSlider *gSettingsMenuWidthSlider = nil;
 static NSTextField *gSettingsMenuWidthValueLabel = nil;
+static NSSegmentedControl *gSettingsThemeSegment = nil;
 
 static void startRecording(void);
 static void stopRecording(void);
 static void updateMenuState(void);
 static void copyToClipboard(NSString *text);
-static void reopenMenuSoon(void);
 static void addTranscriptToHistory(NSString *text);
 static void showSettingsWindow(void);
+static bool isModifierHotKeyCode(CGKeyCode keycode);
+static bool isHotKeyDownForFlags(NSEventModifierFlags flags);
+static NSString *hotkeyTitle(void);
+static void togglePopover(void);
+static void closePopover(void);
+static void ensurePopover(void);
+static void applyGlassTheme(void);
+static NSImage *makeStatusIcon(BOOL recording);
+static void updateStatusItemIcon(void);
+static void applySettingsTheme(void);
 
 @interface MenuHandler : NSObject
 @end
 
 @implementation MenuHandler
-- (void)menuToggleTranscript:(id)sender {
+- (void)statusItemClicked:(id)sender {
 	(void)sender;
-	gAutoPasteEnabled = !gAutoPasteEnabled;
+	togglePopover();
+}
+- (void)popoverToggleAutoPaste:(id)sender {
+	NSButton *b = (NSButton *)sender;
+	if (![b isKindOfClass:[NSButton class]]) return;
+	gAutoPasteEnabled = (b.state == NSControlStateValueOn);
+	[[NSUserDefaults standardUserDefaults] setBool:gAutoPasteEnabled forKey:@"autoPasteEnabled"];
 	updateMenuState();
 }
-- (void)menuOpenSettings:(id)sender {
+- (void)popoverOpenSettings:(id)sender {
 	(void)sender;
+	closePopover();
 	showSettingsWindow();
+}
+- (void)popoverCopyHistory:(id)sender {
+	NSButton *b = (NSButton *)sender;
+	if (![b isKindOfClass:[NSButton class]]) return;
+	NSInteger idx = b.tag;
+	if (!gTranscriptHistory) return;
+	if (idx < 0 || idx >= (NSInteger)gTranscriptHistory.count) return;
+	copyToClipboard(gTranscriptHistory[(NSUInteger)idx]);
+	closePopover();
+}
+- (void)popoverQuit:(id)sender {
+	(void)sender;
+	closePopover();
+	[NSApp terminate:nil];
 }
 - (void)settingsToggleAutoPaste:(id)sender {
 	NSButton *b = (NSButton *)sender;
 	if (![b isKindOfClass:[NSButton class]]) return;
 	gAutoPasteEnabled = (b.state == NSControlStateValueOn);
+	[[NSUserDefaults standardUserDefaults] setBool:gAutoPasteEnabled forKey:@"autoPasteEnabled"];
 	updateMenuState();
 }
 - (void)settingsMenuWidthChanged:(id)sender {
 	NSSlider *s = (NSSlider *)sender;
 	if (![s isKindOfClass:[NSSlider class]]) return;
 	gMaxMenuTextWidth = round(s.doubleValue);
+	[[NSUserDefaults standardUserDefaults] setDouble:gMaxMenuTextWidth forKey:@"maxMenuTextWidth"];
 	if (gSettingsMenuWidthValueLabel) {
 		gSettingsMenuWidthValueLabel.stringValue = [NSString stringWithFormat:@"%.0f px", gMaxMenuTextWidth];
 	}
 	updateMenuState();
 }
-- (void)menuCopyHistory:(id)sender {
-	NSMenuItem *item = (NSMenuItem *)sender;
-	if (![item isKindOfClass:[NSMenuItem class]]) return;
-	id obj = item.representedObject;
-	if (![obj isKindOfClass:[NSString class]]) return;
-	copyToClipboard((NSString *)obj);
+- (void)settingsThemeChanged:(id)sender {
+	NSSegmentedControl *seg = (NSSegmentedControl *)sender;
+	if (![seg isKindOfClass:[NSSegmentedControl class]]) return;
+	gGlassTheme = seg.selectedSegment;
+	[[NSUserDefaults standardUserDefaults] setInteger:gGlassTheme forKey:@"glassTheme"];
+	applyGlassTheme();
+	updateMenuState();
 }
 @end
 
@@ -96,28 +142,42 @@ static void setHotKeyCode(uint16_t v) {
 }
 
 static void updateStatusItemTitle(void) {
-	if (!gStatusItem) return;
-	if (!gStatusItem.button) return;
-	if (gIsRecording) {
-		NSColor *red = [NSColor systemRedColor];
-		NSColor *normal = [NSColor labelColor];
-		NSFont *font = [NSFont menuBarFontOfSize:0];
+	updateStatusItemIcon();
+}
 
-		NSDictionary *dotAttrs = font ? @{ NSForegroundColorAttributeName: red, NSFontAttributeName: font }
-		                               : @{ NSForegroundColorAttributeName: red };
-		NSDictionary *textAttrs = font ? @{ NSForegroundColorAttributeName: normal, NSFontAttributeName: font }
-		                                : @{ NSForegroundColorAttributeName: normal };
+static NSImage *makeStatusIcon(BOOL recording) {
+	if (!gStatusBaseIcon) return nil;
+	const CGFloat s = 18.0;
 
-		NSMutableAttributedString *s = [[NSMutableAttributedString alloc] initWithString:@"●" attributes:dotAttrs];
-		[s appendAttributedString:[[NSAttributedString alloc] initWithString:@" PKT" attributes:textAttrs]];
-		gStatusItem.button.attributedTitle = s;
-	} else {
-		NSFont *font = [NSFont menuBarFontOfSize:0];
-		NSDictionary *attrs = font ? @{ NSForegroundColorAttributeName: [NSColor labelColor], NSFontAttributeName: font }
-		                           : @{ NSForegroundColorAttributeName: [NSColor labelColor] };
-		gStatusItem.button.attributedTitle = [[NSAttributedString alloc] initWithString:@"PKT" attributes:attrs];
-		gStatusItem.button.title = @"PKT";
+	NSImage *out = [[NSImage alloc] initWithSize:NSMakeSize(s, s)];
+	[out lockFocus];
+
+	[gStatusBaseIcon drawInRect:NSMakeRect(0, 0, s, s) fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1.0 respectFlipped:YES hints:nil];
+
+	if (recording) {
+		NSRect dotRect = NSMakeRect(s - 6.5, s - 6.5, 5.0, 5.0);
+		[[NSColor systemRedColor] setFill];
+		[[NSBezierPath bezierPathWithOvalInRect:dotRect] fill];
 	}
+
+	[out unlockFocus];
+	return out;
+}
+
+static void updateStatusItemIcon(void) {
+	if (!gStatusItem || !gStatusItem.button) return;
+	NSBundle *bundle = [NSBundle mainBundle];
+	NSString *iconPath = [bundle pathForResource:@"PKTranscript" ofType:@"icns"];
+	if (!iconPath) return;
+	if (!gStatusBaseIcon) {
+		gStatusBaseIcon = [[NSImage alloc] initWithContentsOfFile:iconPath];
+	}
+	if (!gStatusBaseIcon) return;
+
+	gStatusItem.button.image = makeStatusIcon(gIsRecording);
+	gStatusItem.button.title = @"";
+	gStatusItem.button.attributedTitle = [[NSAttributedString alloc] initWithString:@""];
+	gStatusItem.button.imagePosition = NSImageOnly;
 }
 
 static void copyToClipboard(NSString *text) {
@@ -160,14 +220,6 @@ static void showAccessibilityAlertOnce(void) {
 	a.informativeText = @"Pour coller automatiquement (Cmd+V), active PKTranscript dans Réglages Système → Confidentialité et sécurité → Accessibilité, puis relance l’app.";
 	[a addButtonWithTitle:@"OK"];
 	[a runModal];
-}
-
-static void reopenMenuSoon(void) {
-	if (!gStatusItem || !gStatusItem.menu) return;
-	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(80 * NSEC_PER_MSEC)), dispatch_get_main_queue(), ^{
-		// Re-open the status item menu right after an action (menus close automatically on click).
-		if (gStatusItem.button) [gStatusItem.button performClick:gStatusItem.button];
-	});
 }
 
 static void copyAndMaybePasteText(NSString *text, bool shouldPaste) {
@@ -234,35 +286,247 @@ static void addTranscriptToHistory(NSString *text) {
 	}
 }
 
-static void updateMenuState(void) {
-	if (gTranscriptToggleItem) gTranscriptToggleItem.state = gAutoPasteEnabled ? NSControlStateValueOn : NSControlStateValueOff;
-	if (gSettingsAutoPasteCheckbox) gSettingsAutoPasteCheckbox.state = gAutoPasteEnabled ? NSControlStateValueOn : NSControlStateValueOff;
-
-	BOOL hasHistory = (gTranscriptHistory && gTranscriptHistory.count > 0);
-	if (gHistoryHeaderItem) {
-		gHistoryHeaderItem.hidden = !hasHistory;
+static bool isModifierHotKeyCode(CGKeyCode keycode) {
+	switch (keycode) {
+	case (CGKeyCode)kVK_Function:
+	case (CGKeyCode)kVK_Shift:
+	case (CGKeyCode)kVK_RightShift:
+	case (CGKeyCode)kVK_Control:
+	case (CGKeyCode)kVK_RightControl:
+	case (CGKeyCode)kVK_Option:
+	case (CGKeyCode)kVK_RightOption:
+	case (CGKeyCode)kVK_Command:
+	case (CGKeyCode)kVK_RightCommand:
+		return true;
+	default:
+		return false;
 	}
+}
+
+static bool isHotKeyDownForFlags(NSEventModifierFlags flags) {
+	switch ((CGKeyCode)gHotKeyCode) {
+	case (CGKeyCode)kVK_Function:
+		return (flags & NSEventModifierFlagFunction) != 0;
+	case (CGKeyCode)kVK_Shift:
+	case (CGKeyCode)kVK_RightShift:
+		return (flags & NSEventModifierFlagShift) != 0;
+	case (CGKeyCode)kVK_Control:
+	case (CGKeyCode)kVK_RightControl:
+		return (flags & NSEventModifierFlagControl) != 0;
+	case (CGKeyCode)kVK_Option:
+	case (CGKeyCode)kVK_RightOption:
+		return (flags & NSEventModifierFlagOption) != 0;
+	case (CGKeyCode)kVK_Command:
+	case (CGKeyCode)kVK_RightCommand:
+		return (flags & NSEventModifierFlagCommand) != 0;
+	default:
+		return false;
+	}
+}
+
+static void updateMenuState(void) {
+	if (gSettingsAutoPasteCheckbox) gSettingsAutoPasteCheckbox.state = gAutoPasteEnabled ? NSControlStateValueOn : NSControlStateValueOff;
+	if (gPopoverAutoPasteCheckbox) gPopoverAutoPasteCheckbox.state = gAutoPasteEnabled ? NSControlStateValueOn : NSControlStateValueOff;
+	if (gSettingsMenuWidthSlider) gSettingsMenuWidthSlider.doubleValue = gMaxMenuTextWidth;
+	if (gSettingsMenuWidthValueLabel) gSettingsMenuWidthValueLabel.stringValue = [NSString stringWithFormat:@"%.0f px", gMaxMenuTextWidth];
+	if (gSettingsThemeSegment) gSettingsThemeSegment.selectedSegment = gGlassTheme;
+	if (gPopoverHotkeyLabel) gPopoverHotkeyLabel.stringValue = hotkeyTitle() ?: @"";
+
 	for (int i = 0; i < 10; i++) {
-		NSMenuItem *it = gHistoryItems[i];
+		NSButton *it = gPopoverHistoryButtons[i];
 		if (!it) continue;
-		if (!hasHistory || i >= (int)gTranscriptHistory.count) {
+		if (!gTranscriptHistory || i >= (int)gTranscriptHistory.count) {
 			it.hidden = YES;
-			it.representedObject = nil;
-			it.title = @"";
 			continue;
 		}
 		NSString *entry = gTranscriptHistory[i];
 		NSString *full = [NSString stringWithFormat:@"%d. %@", i + 1, entry];
 		it.title = truncateStringToMenuWidth(full, gMaxMenuTextWidth);
-		it.representedObject = entry;
-		it.enabled = YES;
 		it.hidden = NO;
+	}
+
+	BOOL hasHistory = (gTranscriptHistory && gTranscriptHistory.count > 0);
+	if (gPopoverHistoryHeader) gPopoverHistoryHeader.hidden = !hasHistory;
+
+	if (gPopover) {
+		NSInteger count = gTranscriptHistory ? (NSInteger)gTranscriptHistory.count : 0;
+		if (count > 10) count = 10;
+		CGFloat base = 210.0;
+		CGFloat row = 22.0;
+		CGFloat h = base + row * (CGFloat)count;
+		if (h < 210.0) h = 210.0;
+		gPopover.contentSize = NSMakeSize(360.0, h);
 	}
 }
 
 static NSString *hotkeyTitle(void) {
-	if (gHotKeyCode == (uint16_t)kVK_Function) return @"Raccourci : Fn (maintenir)";
+	switch ((CGKeyCode)gHotKeyCode) {
+	case (CGKeyCode)kVK_Function:
+		return @"Raccourci : Fn (maintenir)";
+	case (CGKeyCode)kVK_RightCommand:
+	case (CGKeyCode)kVK_Command:
+		return @"Raccourci : Cmd (maintenir)";
+	case (CGKeyCode)kVK_RightOption:
+	case (CGKeyCode)kVK_Option:
+		return @"Raccourci : Option (maintenir)";
+	case (CGKeyCode)kVK_RightShift:
+	case (CGKeyCode)kVK_Shift:
+		return @"Raccourci : Shift (maintenir)";
+	case (CGKeyCode)kVK_RightControl:
+	case (CGKeyCode)kVK_Control:
+		return @"Raccourci : Ctrl (maintenir)";
+	default:
+		break;
+	}
 	return [NSString stringWithFormat:@"Raccourci : keycode 0x%X", (unsigned)gHotKeyCode];
+}
+
+static void applyGlassTheme(void) {
+	if (!gPopoverBackground) return;
+	NSAppearanceName name = (gGlassTheme == PKTGlassThemeDark) ? NSAppearanceNameVibrantDark : NSAppearanceNameVibrantLight;
+	NSAppearance *appearance = [NSAppearance appearanceNamed:name];
+	if (gPopover) gPopover.appearance = appearance;
+	gPopoverBackground.appearance = appearance;
+	gPopoverBackground.material = (gGlassTheme == PKTGlassThemeDark) ? NSVisualEffectMaterialHUDWindow : NSVisualEffectMaterialPopover;
+	gPopoverBackground.blendingMode = NSVisualEffectBlendingModeWithinWindow;
+	gPopoverBackground.state = NSVisualEffectStateActive;
+
+	applySettingsTheme();
+}
+
+static void applySettingsTheme(void) {
+	if (!gSettingsWindow) return;
+	NSAppearanceName name = (gGlassTheme == PKTGlassThemeDark) ? NSAppearanceNameVibrantDark : NSAppearanceNameVibrantLight;
+	NSAppearance *appearance = [NSAppearance appearanceNamed:name];
+	gSettingsWindow.appearance = appearance;
+	if (gSettingsBackground) {
+		gSettingsBackground.appearance = appearance;
+		gSettingsBackground.material = (gGlassTheme == PKTGlassThemeDark) ? NSVisualEffectMaterialHUDWindow : NSVisualEffectMaterialPopover;
+		gSettingsBackground.blendingMode = NSVisualEffectBlendingModeWithinWindow;
+		gSettingsBackground.state = NSVisualEffectStateActive;
+	}
+}
+
+static void ensurePopover(void) {
+	if (gPopover) return;
+
+	NSViewController *vc = [NSViewController new];
+	gPopoverBackground = [NSVisualEffectView new];
+	gPopoverBackground.translatesAutoresizingMaskIntoConstraints = NO;
+	vc.view = gPopoverBackground;
+
+	gPopover = [NSPopover new];
+	gPopover.behavior = NSPopoverBehaviorTransient;
+	gPopover.animates = YES;
+	gPopover.contentViewController = vc;
+	gPopover.contentSize = NSMakeSize(360.0, 260.0);
+
+	NSView *content = gPopoverBackground;
+
+	NSTextField *title = [NSTextField labelWithString:@"PKTranscript"];
+	title.font = [NSFont boldSystemFontOfSize:13];
+	title.alignment = NSTextAlignmentLeft;
+	title.translatesAutoresizingMaskIntoConstraints = NO;
+
+	gPopoverHotkeyLabel = [NSTextField labelWithString:@""];
+	gPopoverHotkeyLabel.font = [NSFont systemFontOfSize:12];
+	gPopoverHotkeyLabel.textColor = [NSColor secondaryLabelColor];
+	gPopoverHotkeyLabel.alignment = NSTextAlignmentLeft;
+	gPopoverHotkeyLabel.translatesAutoresizingMaskIntoConstraints = NO;
+
+	gPopoverAutoPasteCheckbox = [NSButton checkboxWithTitle:@"Auto-paste (Cmd+V)" target:gMenuHandler action:@selector(popoverToggleAutoPaste:)];
+	gPopoverAutoPasteCheckbox.translatesAutoresizingMaskIntoConstraints = NO;
+
+	gPopoverSettingsButton = [NSButton buttonWithTitle:@"Settings…" target:gMenuHandler action:@selector(popoverOpenSettings:)];
+	gPopoverSettingsButton.bordered = NO;
+	gPopoverSettingsButton.alignment = NSTextAlignmentLeft;
+	gPopoverSettingsButton.font = [NSFont systemFontOfSize:12];
+	gPopoverSettingsButton.translatesAutoresizingMaskIntoConstraints = NO;
+
+	NSBox *sep1 = [NSBox new];
+	sep1.boxType = NSBoxSeparator;
+	sep1.translatesAutoresizingMaskIntoConstraints = NO;
+
+	gPopoverHistoryHeader = [NSTextField labelWithString:@"Historique"];
+	gPopoverHistoryHeader.font = [NSFont boldSystemFontOfSize:12];
+	gPopoverHistoryHeader.alignment = NSTextAlignmentLeft;
+	gPopoverHistoryHeader.translatesAutoresizingMaskIntoConstraints = NO;
+
+	NSStackView *historyStack = [NSStackView new];
+	historyStack.orientation = NSUserInterfaceLayoutOrientationVertical;
+	historyStack.spacing = 4;
+	historyStack.alignment = NSLayoutAttributeLeading;
+	historyStack.translatesAutoresizingMaskIntoConstraints = NO;
+	for (int i = 0; i < 10; i++) {
+		NSButton *b = [NSButton buttonWithTitle:@"" target:gMenuHandler action:@selector(popoverCopyHistory:)];
+		b.tag = i;
+		b.bordered = NO;
+		b.bezelStyle = NSBezelStyleRegularSquare;
+		b.alignment = NSTextAlignmentLeft;
+		b.font = [NSFont systemFontOfSize:12];
+		b.hidden = YES;
+		[b setButtonType:NSButtonTypeMomentaryPushIn];
+		gPopoverHistoryButtons[i] = b;
+		[historyStack addArrangedSubview:b];
+	}
+
+	NSBox *sep2 = [NSBox new];
+	sep2.boxType = NSBoxSeparator;
+	sep2.translatesAutoresizingMaskIntoConstraints = NO;
+
+	gPopoverQuitButton = [NSButton buttonWithTitle:@"Quitter" target:gMenuHandler action:@selector(popoverQuit:)];
+	gPopoverQuitButton.bordered = NO;
+	gPopoverQuitButton.alignment = NSTextAlignmentLeft;
+	gPopoverQuitButton.font = [NSFont systemFontOfSize:12];
+	gPopoverQuitButton.translatesAutoresizingMaskIntoConstraints = NO;
+
+	gPopoverStack = [NSStackView new];
+	gPopoverStack.orientation = NSUserInterfaceLayoutOrientationVertical;
+	gPopoverStack.spacing = 10;
+	gPopoverStack.alignment = NSLayoutAttributeLeading;
+	gPopoverStack.translatesAutoresizingMaskIntoConstraints = NO;
+
+	[gPopoverStack addArrangedSubview:title];
+	[gPopoverStack addArrangedSubview:gPopoverHotkeyLabel];
+	[gPopoverStack addArrangedSubview:gPopoverAutoPasteCheckbox];
+	[gPopoverStack addArrangedSubview:gPopoverSettingsButton];
+	[gPopoverStack addArrangedSubview:sep1];
+	[gPopoverStack addArrangedSubview:gPopoverHistoryHeader];
+	[gPopoverStack addArrangedSubview:historyStack];
+	[gPopoverStack addArrangedSubview:sep2];
+	[gPopoverStack addArrangedSubview:gPopoverQuitButton];
+
+	[content addSubview:gPopoverStack];
+
+	[NSLayoutConstraint activateConstraints:@[
+		[gPopoverStack.topAnchor constraintEqualToAnchor:content.topAnchor constant:14],
+		[gPopoverStack.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:14],
+		[gPopoverStack.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-14],
+		[gPopoverStack.bottomAnchor constraintLessThanOrEqualToAnchor:content.bottomAnchor constant:-14],
+
+		[sep1.heightAnchor constraintEqualToConstant:1],
+		[sep2.heightAnchor constraintEqualToConstant:1],
+	]];
+
+	applyGlassTheme();
+}
+
+static void closePopover(void) {
+	if (!gPopover) return;
+	if (gPopover.isShown) [gPopover performClose:nil];
+}
+
+static void togglePopover(void) {
+	if (!gStatusItem || !gStatusItem.button) return;
+	ensurePopover();
+	updateMenuState();
+	applyGlassTheme();
+
+	if (gPopover.isShown) {
+		[gPopover performClose:nil];
+		return;
+	}
+	[gPopover showRelativeToRect:gStatusItem.button.bounds ofView:gStatusItem.button preferredEdge:NSRectEdgeMinY];
 }
 
 static void showSettingsWindow(void) {
@@ -270,6 +534,7 @@ static void showSettingsWindow(void) {
 		updateMenuState();
 		if (gSettingsMenuWidthSlider) gSettingsMenuWidthSlider.doubleValue = gMaxMenuTextWidth;
 		if (gSettingsMenuWidthValueLabel) gSettingsMenuWidthValueLabel.stringValue = [NSString stringWithFormat:@"%.0f px", gMaxMenuTextWidth];
+		applySettingsTheme();
 		[NSApp activateIgnoringOtherApps:YES];
 		[gSettingsWindow makeKeyAndOrderFront:gSettingsWindow];
 		return;
@@ -281,7 +546,22 @@ static void showSettingsWindow(void) {
 	gSettingsWindow.title = @"PKTranscript — Settings";
 	gSettingsWindow.releasedWhenClosed = NO;
 
-	NSView *content = gSettingsWindow.contentView;
+	gSettingsBackground = [NSVisualEffectView new];
+	gSettingsBackground.frame = gSettingsWindow.contentView.bounds;
+	gSettingsBackground.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+	[gSettingsWindow setContentView:gSettingsBackground];
+
+	gSettingsContent = [NSView new];
+	gSettingsContent.translatesAutoresizingMaskIntoConstraints = NO;
+	[gSettingsBackground addSubview:gSettingsContent];
+	[NSLayoutConstraint activateConstraints:@[
+		[gSettingsContent.topAnchor constraintEqualToAnchor:gSettingsBackground.topAnchor],
+		[gSettingsContent.leadingAnchor constraintEqualToAnchor:gSettingsBackground.leadingAnchor],
+		[gSettingsContent.trailingAnchor constraintEqualToAnchor:gSettingsBackground.trailingAnchor],
+		[gSettingsContent.bottomAnchor constraintEqualToAnchor:gSettingsBackground.bottomAnchor],
+	]];
+
+	NSView *content = gSettingsContent;
 
 	NSTextField *title = [NSTextField labelWithString:@"Paramètres"];
 	title.font = [NSFont boldSystemFontOfSize:18];
@@ -315,6 +595,25 @@ static void showSettingsWindow(void) {
 	gSettingsMenuWidthSlider.translatesAutoresizingMaskIntoConstraints = NO;
 	[content addSubview:gSettingsMenuWidthSlider];
 
+	NSTextField *themeLabel = [NSTextField labelWithString:@"Style du menu"];
+	themeLabel.translatesAutoresizingMaskIntoConstraints = NO;
+	[content addSubview:themeLabel];
+
+	gSettingsThemeSegment = [NSSegmentedControl segmentedControlWithLabels:@[ @"Light", @"Dark" ] trackingMode:NSSegmentSwitchTrackingSelectOne target:gMenuHandler action:@selector(settingsThemeChanged:)];
+	gSettingsThemeSegment.selectedSegment = gGlassTheme;
+	if (@available(macOS 11.0, *)) {
+		NSImage *sun = [NSImage imageWithSystemSymbolName:@"sun.max" accessibilityDescription:@"Light"];
+		NSImage *moon = [NSImage imageWithSystemSymbolName:@"moon" accessibilityDescription:@"Dark"];
+		if (sun && moon) {
+			[gSettingsThemeSegment setLabel:@"" forSegment:0];
+			[gSettingsThemeSegment setLabel:@"" forSegment:1];
+			[gSettingsThemeSegment setImage:sun forSegment:0];
+			[gSettingsThemeSegment setImage:moon forSegment:1];
+		}
+	}
+	gSettingsThemeSegment.translatesAutoresizingMaskIntoConstraints = NO;
+	[content addSubview:gSettingsThemeSegment];
+
 	NSTextField *placeholder = [NSTextField labelWithString:@"Autres réglages (raccourci, locale, etc.) : à venir"];
 	placeholder.textColor = [NSColor tertiaryLabelColor];
 	placeholder.font = [NSFont systemFontOfSize:12];
@@ -344,11 +643,18 @@ static void showSettingsWindow(void) {
 		[gSettingsMenuWidthSlider.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
 		[gSettingsMenuWidthSlider.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
 
-		[placeholder.topAnchor constraintEqualToAnchor:gSettingsMenuWidthSlider.bottomAnchor constant:18],
+		[themeLabel.topAnchor constraintEqualToAnchor:gSettingsMenuWidthSlider.bottomAnchor constant:16],
+		[themeLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
+
+		[gSettingsThemeSegment.centerYAnchor constraintEqualToAnchor:themeLabel.centerYAnchor],
+		[gSettingsThemeSegment.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
+
+		[placeholder.topAnchor constraintEqualToAnchor:themeLabel.bottomAnchor constant:18],
 		[placeholder.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
 		[placeholder.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
 	]];
 
+	applySettingsTheme();
 	[gSettingsWindow center];
 	[NSApp activateIgnoringOtherApps:YES];
 	[gSettingsWindow makeKeyAndOrderFront:gSettingsWindow];
@@ -463,8 +769,8 @@ static CGEventRef eventTapCallback(CGEventTapProxy proxy, CGEventType type, CGEv
 	CGKeyCode keycode = (CGKeyCode)CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode);
 	if (keycode != gHotKeyCode) return event;
 
-	if (type == kCGEventFlagsChanged && keycode == (CGKeyCode)kVK_Function) {
-		// Fn is handled via NSEvent monitors (more reliable). Avoid double-trigger here.
+	if (isModifierHotKeyCode(keycode)) {
+		// Modifier hotkeys are handled via NSEvent flagsChanged monitors (more reliable).
 		return event;
 	}
 
@@ -481,49 +787,18 @@ static CGEventRef eventTapCallback(CGEventTapProxy proxy, CGEventType type, CGEv
 }
 
 static void setupStatusBar(void) {
-	gStatusItem = [[NSStatusBar systemStatusBar] statusItemWithLength:NSVariableStatusItemLength];
-	gStatusItem.button.title = @"PKT";
-
-	NSMenu *menu = [[NSMenu alloc] init];
-	menu.autoenablesItems = NO;
-	// Menu handler implemented below.
+	gStatusItem = [[NSStatusBar systemStatusBar] statusItemWithLength:NSSquareStatusItemLength];
+	gStatusItem.button.title = @"";
+	// Handler implemented above.
 	gMenuHandler = [MenuHandler new];
 	if (!gTranscriptHistory) gTranscriptHistory = [NSMutableArray arrayWithCapacity:10];
 
-	gHotkeyItem = [[NSMenuItem alloc] initWithTitle:hotkeyTitle() action:nil keyEquivalent:@""];
-	gHotkeyItem.enabled = NO;
-	[menu addItem:gHotkeyItem];
+	gStatusItem.menu = nil;
+	gStatusItem.button.target = gMenuHandler;
+	gStatusItem.button.action = @selector(statusItemClicked:);
+	updateStatusItemIcon();
 
-	[menu addItem:[NSMenuItem separatorItem]];
-
-	gTranscriptToggleItem = [[NSMenuItem alloc] initWithTitle:@"Transcript (auto-paste)" action:@selector(menuToggleTranscript:) keyEquivalent:@""];
-	gTranscriptToggleItem.target = gMenuHandler;
-	[menu addItem:gTranscriptToggleItem];
-
-	gSettingsItem = [[NSMenuItem alloc] initWithTitle:@"Settings…" action:@selector(menuOpenSettings:) keyEquivalent:@","];
-	gSettingsItem.target = gMenuHandler;
-	[menu addItem:gSettingsItem];
-
-	[menu addItem:[NSMenuItem separatorItem]];
-
-	gHistoryHeaderItem = [[NSMenuItem alloc] initWithTitle:@"Historique (10)" action:nil keyEquivalent:@""];
-	gHistoryHeaderItem.enabled = NO;
-	[menu addItem:gHistoryHeaderItem];
-
-	for (int i = 0; i < 10; i++) {
-		gHistoryItems[i] = [[NSMenuItem alloc] initWithTitle:@"" action:@selector(menuCopyHistory:) keyEquivalent:@""];
-		gHistoryItems[i].target = gMenuHandler;
-		gHistoryItems[i].indentationLevel = 1;
-		gHistoryItems[i].hidden = YES;
-		[menu addItem:gHistoryItems[i]];
-	}
-
-	[menu addItem:[NSMenuItem separatorItem]];
-	NSMenuItem *quit = [[NSMenuItem alloc] initWithTitle:@"Quitter PKTranscript" action:@selector(terminate:) keyEquivalent:@"q"];
-	quit.enabled = YES;
-	[menu addItem:quit];
-	gStatusItem.menu = menu;
-
+	ensurePopover();
 	updateMenuState();
 }
 
@@ -541,6 +816,19 @@ static void runApp(const char *localeCString) {
 	@autoreleasepool {
 		[NSApplication sharedApplication];
 		[NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+
+		NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+		if ([defaults objectForKey:@"glassTheme"] != nil) {
+			NSInteger t = [defaults integerForKey:@"glassTheme"];
+			if (t == PKTGlassThemeLight || t == PKTGlassThemeDark) gGlassTheme = t;
+		}
+		if ([defaults objectForKey:@"maxMenuTextWidth"] != nil) {
+			double w = [defaults doubleForKey:@"maxMenuTextWidth"];
+			if (w >= 180.0 && w <= 420.0) gMaxMenuTextWidth = (CGFloat)w;
+		}
+		if ([defaults objectForKey:@"autoPasteEnabled"] != nil) {
+			gAutoPasteEnabled = [defaults boolForKey:@"autoPasteEnabled"];
+		}
 
 		requestPermissions();
 		// Prompt early for Accessibility so Cmd+V paste can work.
@@ -560,19 +848,19 @@ static void runApp(const char *localeCString) {
 		setupStatusBar();
 		updateStatusItemTitle();
 
-		// Fn is a modifier key and may not produce keyDown/up events; listen to modifier flag changes.
-		void (^fnFlagsHandler)(NSEvent *) = ^(NSEvent *e) {
-			if (gHotKeyCode != (uint16_t)kVK_Function) return;
-			BOOL down = (e.modifierFlags & NSEventModifierFlagFunction) != 0;
-			if (down == gFnIsDown) return;
-			gFnIsDown = down;
+		// Modifier keys (Fn/Cmd/Option/Shift/Ctrl) may not produce reliable keyDown/up events; listen to modifier flag changes.
+		void (^modifierFlagsHandler)(NSEvent *) = ^(NSEvent *e) {
+			if (!isModifierHotKeyCode((CGKeyCode)gHotKeyCode)) return;
+			BOOL down = isHotKeyDownForFlags(e.modifierFlags);
+			if (down == gModifierIsDown) return;
+			gModifierIsDown = down;
 			dispatch_async(dispatch_get_main_queue(), ^{
 				if (down) startRecording(); else stopRecording();
 			});
 		};
-		gFlagsChangedMonitor = [NSEvent addGlobalMonitorForEventsMatchingMask:NSEventMaskFlagsChanged handler:fnFlagsHandler];
+		gFlagsChangedMonitor = [NSEvent addGlobalMonitorForEventsMatchingMask:NSEventMaskFlagsChanged handler:modifierFlagsHandler];
 		gFlagsChangedLocalMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskFlagsChanged handler:^NSEvent * _Nullable(NSEvent * _Nonnull e) {
-			fnFlagsHandler(e);
+			modifierFlagsHandler(e);
 			return e;
 		}];
 

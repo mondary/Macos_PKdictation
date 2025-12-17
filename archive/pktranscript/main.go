@@ -12,7 +12,7 @@ func main() {
 	var hotkey string
 	var locale string
 
-	flag.StringVar(&hotkey, "hotkey", "fn", "Push-to-talk key: fn, f6, f7, f8, rshift, lshift, rctrl, lctrl, ropt, lopt, cmd (or a numeric macOS virtual keycode like 0x3F)")
+	flag.StringVar(&hotkey, "hotkey", "fn", "Push-to-talk key: fn, f6, f7, f8, rshift, lshift, rctrl, lctrl, ropt, lopt, cmd, lcmd, rcmd (or a numeric macOS virtual keycode like 0x3F)")
 	flag.StringVar(&locale, "locale", "fr-FR", "Speech recognition locale (e.g. fr-FR, en-US). Use \"system\" to use system locale.")
 	flag.Parse()
 
