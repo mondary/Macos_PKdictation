@@ -28,6 +28,8 @@ static NSMutableArray<NSString *> *gTranscriptHistory = nil;
 static bool gDidCommitTranscript = false;
 static CGFloat gMaxMenuTextWidth = 280.0;
 static NSString *gLocaleIdentifier = @"";
+static const int64_t gMinHoldToRecordMs = 250;
+static uint64_t gPendingStartSeq = 0;
 
 static NSStatusItem *gStatusItem = nil;
 static CFMachPortRef gEventTap = NULL;
@@ -62,7 +64,7 @@ static NSSegmentedControl *gSettingsThemeSegment = nil;
 static void startRecording(void);
 static void stopRecording(void);
 static void updateMenuState(void);
-static void copyToClipboard(NSString *text);
+static bool copyToClipboard(NSString *text);
 static void addTranscriptToHistory(NSString *text);
 static void showSettingsWindow(void);
 static bool isModifierHotKeyCode(CGKeyCode keycode);
@@ -102,7 +104,7 @@ static void applySettingsTheme(void);
 	NSInteger idx = b.tag;
 	if (!gTranscriptHistory) return;
 	if (idx < 0 || idx >= (NSInteger)gTranscriptHistory.count) return;
-	copyToClipboard(gTranscriptHistory[(NSUInteger)idx]);
+	(void)copyToClipboard(gTranscriptHistory[(NSUInteger)idx]);
 	closePopover();
 }
 - (void)popoverQuit:(id)sender {
@@ -180,14 +182,15 @@ static void updateStatusItemIcon(void) {
 	gStatusItem.button.imagePosition = NSImageOnly;
 }
 
-static void copyToClipboard(NSString *text) {
-	if (!text) return;
+static bool copyToClipboard(NSString *text) {
+	if (!text) return false;
 	NSString *trim = [text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-	if (trim.length == 0) return;
+	if (trim.length == 0) return false;
 
 	NSPasteboard *pb = [NSPasteboard generalPasteboard];
 	[pb clearContents];
 	[pb setString:trim forType:NSPasteboardTypeString];
+	return true;
 }
 
 static void pasteClipboard(void) {
@@ -223,7 +226,8 @@ static void showAccessibilityAlertOnce(void) {
 }
 
 static void copyAndMaybePasteText(NSString *text, bool shouldPaste) {
-	copyToClipboard(text);
+	bool didCopy = copyToClipboard(text);
+	if (!didCopy) return;
 	if (!shouldPaste) return;
 
 	if (!ensureAccessibilityTrusted(true)) {
@@ -874,8 +878,22 @@ static void runApp(const char *localeCString) {
 			BOOL down = isHotKeyDownForFlags(e.modifierFlags);
 			if (down == gModifierIsDown) return;
 			gModifierIsDown = down;
+			if (down) {
+				// Delay start so a quick tap (e.g. Fn for emojis) doesn't trigger paste/clipboard side effects.
+				uint64_t seq = ++gPendingStartSeq;
+				dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(gMinHoldToRecordMs * NSEC_PER_MSEC)), dispatch_get_main_queue(), ^{
+					if (!gModifierIsDown) return;
+					if (gIsRecording) return;
+					if (seq != gPendingStartSeq) return;
+					startRecording();
+				});
+				return;
+			}
+
+			// Key released: cancel any pending start; stop only if we actually started.
+			++gPendingStartSeq;
 			dispatch_async(dispatch_get_main_queue(), ^{
-				if (down) startRecording(); else stopRecording();
+				if (gIsRecording) stopRecording();
 			});
 		};
 		gFlagsChangedMonitor = [NSEvent addGlobalMonitorForEventsMatchingMask:NSEventMaskFlagsChanged handler:modifierFlagsHandler];
