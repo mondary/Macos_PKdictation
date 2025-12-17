@@ -37,6 +37,7 @@ static id gMenuHandler = nil;
 static id gFlagsChangedMonitor = nil;
 static id gFlagsChangedLocalMonitor = nil;
 static BOOL gFnIsDown = NO;
+static BOOL gDidShowAccessibilityAlert = NO;
 
 static void startRecording(void);
 static void stopRecording(void);
@@ -101,10 +102,36 @@ static void pasteClipboard(void) {
 	CFRelease(keyUp);
 }
 
+static bool ensureAccessibilityTrusted(bool prompt) {
+	if (!prompt) return AXIsProcessTrusted();
+	const void *keys[] = { kAXTrustedCheckOptionPrompt };
+	const void *vals[] = { kCFBooleanTrue };
+	CFDictionaryRef opts = CFDictionaryCreate(kCFAllocatorDefault, keys, vals, 1, &kCFCopyStringDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+	Boolean trusted = AXIsProcessTrustedWithOptions(opts);
+	CFRelease(opts);
+	return trusted;
+}
+
+static void showAccessibilityAlertOnce(void) {
+	if (gDidShowAccessibilityAlert) return;
+	gDidShowAccessibilityAlert = YES;
+	NSAlert *a = [[NSAlert alloc] init];
+	a.messageText = @"Autorisation requise : Accessibilité";
+	a.informativeText = @"Pour coller automatiquement (Cmd+V), active PKTranscript dans Réglages Système → Confidentialité et sécurité → Accessibilité, puis relance l’app.";
+	[a addButtonWithTitle:@"OK"];
+	[a runModal];
+}
+
 static void copyAndMaybePasteText(NSString *text, bool shouldPaste) {
 	copyToClipboard(text);
 	if (!shouldPaste) return;
 
+	if (!ensureAccessibilityTrusted(true)) {
+		dispatch_async(dispatch_get_main_queue(), ^{
+			showAccessibilityAlertOnce();
+		});
+		return;
+	}
 	pasteClipboard();
 }
 
@@ -317,6 +344,8 @@ static void runApp(const char *localeCString) {
 		[NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
 
 		requestPermissions();
+		// Prompt early for Accessibility so Cmd+V paste can work.
+		(void)ensureAccessibilityTrusted(true);
 
 		NSString *locale = nil;
 		if (localeCString && strlen(localeCString) > 0) {
