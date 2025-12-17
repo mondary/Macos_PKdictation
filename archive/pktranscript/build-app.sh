@@ -46,7 +46,7 @@ cat > "$APP_DIR/Contents/Info.plist" <<EOF
   <key>CFBundleVersion</key><string>1</string>
   <key>CFBundleShortVersionString</key><string>0.1.0</string>
   <key>CFBundleExecutable</key><string>pktranscript</string>
-  <key>CFBundleIconFile</key><string>PKTranscript.icns</string>
+  <key>CFBundleIconFile</key><string>PKTranscript</string>
   <key>CFBundleIconName</key><string>PKTranscript</string>
   <key>LSUIElement</key><true/>
   <key>NSMicrophoneUsageDescription</key><string>PKTranscript a besoin du micro pour transcrire votre voix.</string>
