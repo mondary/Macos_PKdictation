@@ -8,10 +8,21 @@ package main
 
 #import <Cocoa/Cocoa.h>
 #import <QuartzCore/QuartzCore.h>
+#import <math.h>
 
 typedef NS_ENUM(NSInteger, PKNIconStyle) {
 	PKNIconStyleWave = 0,
 	PKNIconStyleMicro = 1,
+};
+
+typedef NS_ENUM(NSInteger, PKNSpinnerPattern) {
+	PKNSpinnerPatternWave = 0,
+	PKNSpinnerPatternSpinner = 1,
+	PKNSpinnerPatternPulse = 2,
+	PKNSpinnerPatternCross = 3,
+	PKNSpinnerPatternBurst = 4,
+	PKNSpinnerPatternArrowMove = 5,
+	PKNSpinnerPatternSineWave = 6,
 };
 
 @interface PKNOverlayPanel : NSPanel
@@ -31,20 +42,26 @@ static NSInteger gSpinnerStep = 0;
 static NSTextField *gNotchLabel = nil;
 static NSWindow *gControlWindow = nil;
 static NSSegmentedControl *gIconSegment = nil;
+static NSPopUpButton *gPatternPopup = nil;
 static NSInteger gIconStyle = PKNIconStyleWave;
+static NSInteger gSpinnerPattern = PKNSpinnerPatternSpinner;
 static NSImage *gMicroIcon = nil;
 static id gAppDelegate = nil;
+static CFTimeInterval gSpinnerStartTime = 0;
 
 static void ensureNotchWindow(void);
 static void positionNotchWindow(void);
 static void updateNotchAppearance(void);
 static void updateSpinnerFrame(void);
+static CGFloat spinnerIntensityForDot(NSInteger i, double tNorm);
+static CFTimeInterval spinnerCycleDuration(void);
 static void startSpinner(void);
 static void stopSpinner(void);
 static void showNotch(void);
 static void hideNotch(void);
 static void toggleNotch(void);
 static void createControlWindow(id target);
+static NSString *spinnerPatternTitle(void);
 
 static NSImage *loadMicroIcon(void) {
 	if (gMicroIcon) return gMicroIcon;
@@ -100,34 +117,180 @@ static NSColor *spinnerGlowColor(void) {
 	return [NSColor colorWithCalibratedRed:1.0 green:163.0/255.0 blue:235.0/255.0 alpha:1.0];
 }
 
-static void applyDotStyle(NSView *dot, BOOL active) {
+static NSString *spinnerPatternTitle(void) {
+	switch (gSpinnerPattern) {
+	case PKNSpinnerPatternWave: return @"Wave";
+	case PKNSpinnerPatternSpinner: return @"Spinner";
+	case PKNSpinnerPatternPulse: return @"Pulse";
+	case PKNSpinnerPatternCross: return @"Cross";
+	case PKNSpinnerPatternBurst: return @"Burst";
+	case PKNSpinnerPatternArrowMove: return @"ArrowMove";
+	case PKNSpinnerPatternSineWave: return @"Sine Wave";
+	default: return @"Spinner";
+	}
+}
+
+static CGFloat clamp01(CGFloat v) {
+	if (v < 0.0) return 0.0;
+	if (v > 1.0) return 1.0;
+	return v;
+}
+
+static CGFloat smoothstep01(CGFloat t) {
+	t = clamp01(t);
+	return t * t * (3.0 - 2.0 * t);
+}
+
+static CGFloat wrapDist01(CGFloat a, CGFloat b) {
+	CGFloat d = fabs(a - b);
+	if (d > 1.0) d = fmod(d, 1.0);
+	return fmin(d, 1.0 - d);
+}
+
+static CGFloat phasePulse(CGFloat t, CGFloat phase, CGFloat width) {
+	CGFloat d = wrapDist01(t, phase);
+	if (d >= width) return 0.0;
+	return smoothstep01(1.0 - (d / width));
+}
+
+static BOOL dotInList(NSInteger idx, const NSInteger *list, NSInteger count) {
+	for (NSInteger i = 0; i < count; i++) {
+		if (list[i] == idx) return YES;
+	}
+	return NO;
+}
+
+static CFTimeInterval spinnerCycleDuration(void) {
+	switch (gSpinnerPattern) {
+	case PKNSpinnerPatternWave:
+		return 1.50;
+	case PKNSpinnerPatternSpinner:
+		return 1.00;
+	case PKNSpinnerPatternPulse:
+		return 1.75;
+	case PKNSpinnerPatternCross:
+		return 1.30;
+	case PKNSpinnerPatternBurst:
+		return 1.25;
+	case PKNSpinnerPatternArrowMove:
+		return 1.75;
+	case PKNSpinnerPatternSineWave:
+		return 1.25;
+	default:
+		return 1.20;
+	}
+}
+
+static CGFloat spinnerIntensityForDot(NSInteger i, double tNorm) {
+	CGFloat t = (CGFloat)tNorm;
+	NSInteger row = i / 3;
+	NSInteger col = i % 3;
+	BOOL isCenter = (i == 4);
+
+	switch (gSpinnerPattern) {
+	case PKNSpinnerPatternSpinner: {
+		// CSS-inspired spinner: center always on, orthogonals rotate.
+		if (isCenter) return 1.0;
+		static const NSInteger ringDots[4] = {1, 5, 7, 3};
+		static const CGFloat phases[4] = {0.00, 0.25, 0.50, 0.75};
+		for (NSInteger k = 0; k < 4; k++) {
+			if (i == ringDots[k]) return phasePulse(t, phases[k], 0.18);
+		}
+		return 0.0;
+	}
+	case PKNSpinnerPatternWave: {
+		// Diagonal traveling wave across the 3x3 matrix.
+		CGFloat phase = (CGFloat)(row + col) / 4.0;
+		CGFloat a = phasePulse(t, phase, 0.16);
+		CGFloat b = 0.45 * phasePulse(t, fmod(phase + 0.50, 1.0), 0.16);
+		return clamp01(fmax(a, b));
+	}
+	case PKNSpinnerPatternPulse: {
+		// Center pulse with delayed rings (orthogonals then corners).
+		CGFloat delay = 0.0;
+		if (!isCenter) {
+			NSInteger manhattan = labs(row - 1) + labs(col - 1);
+			delay = (manhattan == 1) ? 0.09 : 0.17;
+		}
+		return phasePulse(t, delay, isCenter ? 0.26 : 0.20);
+	}
+	case PKNSpinnerPatternCross: {
+		// Alternate X and + groups with center bridging.
+		static const NSInteger xDots[] = {0, 2, 6, 8};
+		static const NSInteger plusDots[] = {1, 3, 5, 7};
+		CGFloat xI = fmax(phasePulse(t, 0.00, 0.22), phasePulse(t, 0.50, 0.22));
+		CGFloat plusI = fmax(phasePulse(t, 0.25, 0.20), phasePulse(t, 0.75, 0.20));
+		if (isCenter) return clamp01(fmax(xI, plusI));
+		if (dotInList(i, xDots, 4)) return xI;
+		if (dotInList(i, plusDots, 4)) return plusI;
+		return 0.0;
+	}
+	case PKNSpinnerPatternBurst: {
+		// Center -> orthogonals -> corners burst.
+		CGFloat phase = 0.0;
+		if (isCenter) phase = 0.00;
+		else {
+			NSInteger manhattan = labs(row - 1) + labs(col - 1);
+			phase = (manhattan == 1) ? 0.12 : 0.22;
+		}
+		return phasePulse(t, phase, isCenter ? 0.20 : 0.18);
+	}
+	case PKNSpinnerPatternArrowMove: {
+		// Three right-pointing arrow positions moving left -> center -> right.
+		static const NSInteger frame0[] = {0, 3, 4, 6, 1};
+		static const NSInteger frame1[] = {1, 4, 7, 2, 5};
+		static const NSInteger frame2[] = {2, 5, 8, 4, 7};
+		CGFloat f0 = phasePulse(t, 0.00, 0.16);
+		CGFloat f1 = phasePulse(t, 0.33, 0.16);
+		CGFloat f2 = phasePulse(t, 0.66, 0.16);
+		CGFloat v = 0.0;
+		if (dotInList(i, frame0, 5)) v = fmax(v, f0);
+		if (dotInList(i, frame1, 5)) v = fmax(v, f1);
+		if (dotInList(i, frame2, 5)) v = fmax(v, f2);
+		return clamp01(v);
+	}
+	case PKNSpinnerPatternSineWave: {
+		// Column-based phase shift to mimic a sine wave motion across matrix.
+		CGFloat colPhase = (CGFloat)col * 0.18;
+		CGFloat rowOffset = (row == 1) ? 0.00 : 0.10;
+		CGFloat a = phasePulse(t, fmod(colPhase + rowOffset, 1.0), 0.18);
+		CGFloat b = 0.65 * phasePulse(t, fmod(colPhase + rowOffset + 0.50, 1.0), 0.18);
+		return clamp01(fmax(a, b));
+	}
+	default:
+		return 0.0;
+	}
+}
+
+static void applyDotStyle(NSView *dot, CGFloat intensity) {
 	if (!dot || !dot.layer) return;
+	intensity = clamp01(intensity);
+	BOOL active = intensity > 0.01;
 	dot.layer.backgroundColor = (active ? spinnerAccentColor() : spinnerBaseColor()).CGColor;
 	dot.layer.shadowColor = spinnerGlowColor().CGColor;
-	dot.layer.shadowOpacity = active ? 0.95 : 0.0;
-	dot.layer.shadowRadius = active ? 6.0 : 0.0;
+	dot.layer.shadowOpacity = active ? (0.25 + 0.70 * intensity) : 0.0;
+	dot.layer.shadowRadius = active ? (1.0 + 3.0 * intensity) : 0.0;
 	dot.layer.shadowOffset = CGSizeZero;
-	dot.layer.transform = active ? CATransform3DMakeScale(1.12, 1.12, 1.0) : CATransform3DIdentity;
+	CGFloat s = 1.0 + 0.08 * intensity;
+	dot.layer.transform = active ? CATransform3DMakeScale(s, s, 1.0) : CATransform3DIdentity;
 }
 
 static void updateSpinnerFrame(void) {
 	if (!gSpinnerContainer) return;
-	static const NSInteger order[8] = {0, 1, 2, 5, 8, 7, 6, 3}; // clockwise perimeter
-	NSInteger activeIdx = order[(NSUInteger)(gSpinnerStep % 8)];
-
+	if (gSpinnerStartTime <= 0) gSpinnerStartTime = CACurrentMediaTime();
+	CFTimeInterval now = CACurrentMediaTime();
+	CFTimeInterval dur = spinnerCycleDuration();
+	double tNorm = (dur > 0) ? fmod((now - gSpinnerStartTime) / dur, 1.0) : 0.0;
 	for (NSInteger i = 0; i < 9; i++) {
-		BOOL active = (i == activeIdx);
-		if (i == 4) active = NO; // center stays muted like a matrix hub
-		applyDotStyle(gSpinnerDots[i], active);
+		applyDotStyle(gSpinnerDots[i], spinnerIntensityForDot(i, tNorm));
 	}
-
-	gSpinnerStep = (gSpinnerStep + 1) % 8;
 }
 
 static void startSpinner(void) {
 	if (gSpinnerTimer) return;
+	gSpinnerStartTime = CACurrentMediaTime();
 	updateSpinnerFrame();
-	gSpinnerTimer = [NSTimer scheduledTimerWithTimeInterval:0.25 repeats:YES block:^(__unused NSTimer *timer) {
+	gSpinnerTimer = [NSTimer scheduledTimerWithTimeInterval:(1.0 / 30.0) repeats:YES block:^(__unused NSTimer *timer) {
 		updateSpinnerFrame();
 	}];
 	[[NSRunLoop mainRunLoop] addTimer:gSpinnerTimer forMode:NSRunLoopCommonModes];
@@ -138,8 +301,9 @@ static void stopSpinner(void) {
 		[gSpinnerTimer invalidate];
 		gSpinnerTimer = nil;
 	}
+	gSpinnerStartTime = 0;
 	for (NSInteger i = 0; i < 9; i++) {
-		applyDotStyle(gSpinnerDots[i], NO);
+		applyDotStyle(gSpinnerDots[i], 0.0);
 	}
 }
 
@@ -163,7 +327,7 @@ static void positionNotchWindow(void) {
 static void updateNotchAppearance(void) {
 	if (!gNotchWindow) return;
 	if (gNotchLabel) {
-		gNotchLabel.stringValue = @"Listening…";
+		gNotchLabel.stringValue = [NSString stringWithFormat:@"Listening… · %@", spinnerPatternTitle()];
 	}
 }
 
@@ -203,14 +367,14 @@ static void ensureNotchWindow(void) {
 	gSpinnerContainer.wantsLayer = YES;
 	[content addSubview:gSpinnerContainer];
 
-	const CGFloat dotSize = 6.0;
-	const CGFloat gap = 2.0;
+	const CGFloat dotSize = 5.0;
+	const CGFloat gap = 1.0;
 	for (NSInteger i = 0; i < 9; i++) {
 		NSInteger row = i / 3;
 		NSInteger col = i % 3;
 		NSView *d = [[NSView alloc] initWithFrame:NSMakeRect(col * (dotSize + gap), (2 - row) * (dotSize + gap), dotSize, dotSize)];
 		d.wantsLayer = YES;
-		d.layer.cornerRadius = 1.5;
+		d.layer.cornerRadius = 1.0;
 		d.layer.masksToBounds = NO;
 		d.layer.backgroundColor = spinnerBaseColor().CGColor;
 		gSpinnerDots[i] = d;
@@ -227,10 +391,10 @@ static void ensureNotchWindow(void) {
 	[NSLayoutConstraint activateConstraints:@[
 		[gSpinnerContainer.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:14],
 		[gSpinnerContainer.centerYAnchor constraintEqualToAnchor:content.centerYAnchor],
-		[gSpinnerContainer.widthAnchor constraintEqualToConstant:22],
-		[gSpinnerContainer.heightAnchor constraintEqualToConstant:22],
+		[gSpinnerContainer.widthAnchor constraintEqualToConstant:17],
+		[gSpinnerContainer.heightAnchor constraintEqualToConstant:17],
 
-		[gNotchLabel.leadingAnchor constraintEqualToAnchor:gSpinnerContainer.trailingAnchor constant:10],
+		[gNotchLabel.leadingAnchor constraintEqualToAnchor:gSpinnerContainer.trailingAnchor constant:9],
 		[gNotchLabel.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-14],
 		[gNotchLabel.centerYAnchor constraintEqualToAnchor:content.centerYAnchor],
 	]];
@@ -329,6 +493,18 @@ static void toggleNotch(void) {
 	if (gNotchWindow && gNotchWindow.visible) [gNotchWindow orderFrontRegardless];
 }
 
+- (void)patternChanged:(id)sender {
+	NSPopUpButton *popup = (NSPopUpButton *)sender;
+	if (![popup isKindOfClass:[NSPopUpButton class]]) return;
+	NSInteger idx = popup.indexOfSelectedItem;
+	if (idx < 0) return;
+	gSpinnerPattern = idx;
+	gSpinnerStartTime = CACurrentMediaTime();
+	updateNotchAppearance();
+	updateSpinnerFrame();
+	if (gNotchWindow && gNotchWindow.visible) [gNotchWindow orderFrontRegardless];
+}
+
 - (void)quitAction:(id)sender {
 	(void)sender;
 	[NSApp terminate:nil];
@@ -345,7 +521,7 @@ static NSButton *makeBtn(NSString *title, id target, SEL action, NSRect frame) {
 static void createControlWindow(id target) {
 	if (gControlWindow) return;
 
-	NSRect frame = NSMakeRect(0, 0, 420, 190);
+	NSRect frame = NSMakeRect(0, 0, 420, 235);
 	gControlWindow = [[NSWindow alloc] initWithContentRect:frame
 		styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable
 		backing:NSBackingStoreBuffered
@@ -357,24 +533,24 @@ static void createControlWindow(id target) {
 
 	NSTextField *title = [NSTextField labelWithString:@"Tester le notch indépendamment de PKvoice"];
 	title.font = [NSFont boldSystemFontOfSize:14];
-	title.frame = NSMakeRect(20, 146, 380, 22);
+	title.frame = NSMakeRect(20, 191, 380, 22);
 	[content addSubview:title];
 
 	NSTextField *hint = [NSTextField labelWithString:@"Le notch s'affiche en haut-centre (abaissé pour le test). Utilise les boutons ci-dessous pour le montrer / cacher."];
 	hint.font = [NSFont systemFontOfSize:12];
 	hint.textColor = [NSColor secondaryLabelColor];
-	hint.frame = NSMakeRect(20, 124, 380, 18);
+	hint.frame = NSMakeRect(20, 169, 380, 18);
 	[content addSubview:hint];
 
-	NSTextField *iconLabel = [NSTextField labelWithString:@"Style spinner"];
-	iconLabel.frame = NSMakeRect(20, 92, 80, 20);
+	NSTextField *iconLabel = [NSTextField labelWithString:@"Couleur"];
+	iconLabel.frame = NSMakeRect(20, 132, 80, 20);
 	[content addSubview:iconLabel];
 
 	gIconSegment = [NSSegmentedControl segmentedControlWithLabels:@[ @"Wave", @"Micro" ]
 		trackingMode:NSSegmentSwitchTrackingSelectOne
 		target:target
 		action:@selector(iconStyleChanged:)];
-	gIconSegment.frame = NSMakeRect(100, 88, 150, 28);
+	gIconSegment.frame = NSMakeRect(100, 128, 150, 28);
 	gIconSegment.selectedSegment = gIconStyle;
 
 	if (@available(macOS 11.0, *)) {
@@ -392,6 +568,25 @@ static void createControlWindow(id target) {
 		[gIconSegment setImage:micro forSegment:1];
 	}
 	[content addSubview:gIconSegment];
+
+	NSTextField *patternLabel = [NSTextField labelWithString:@"Pattern"];
+	patternLabel.frame = NSMakeRect(20, 94, 80, 20);
+	[content addSubview:patternLabel];
+
+	gPatternPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(100, 90, 200, 28) pullsDown:NO];
+	[gPatternPopup addItemsWithTitles:@[
+		@"Wave",
+		@"Spinner",
+		@"Pulse",
+		@"Cross",
+		@"Burst",
+		@"ArrowMove",
+		@"Sine Wave"
+	]];
+	[gPatternPopup selectItemAtIndex:gSpinnerPattern];
+	gPatternPopup.target = target;
+	gPatternPopup.action = @selector(patternChanged:);
+	[content addSubview:gPatternPopup];
 
 	[content addSubview:makeBtn(@"Afficher", target, @selector(showNotchAction:), NSMakeRect(20, 34, 90, 30))];
 	[content addSubview:makeBtn(@"Masquer", target, @selector(hideNotchAction:), NSMakeRect(120, 34, 90, 30))];
