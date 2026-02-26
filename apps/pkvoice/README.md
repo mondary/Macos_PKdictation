@@ -51,6 +51,7 @@ Cette app ouvre une petite fenêtre de contrôle avec :
 - `Afficher` / `Masquer` / `Toggle`
 - choix d'icône `Wave` / `Micro`
 - `Recentrer` (si tu changes d'écran / espace)
+- le notch de test est volontairement **abaissé** sous la barre de menu pour être plus visible
 
 À la première exécution, macOS va demander les autorisations. Si ça ne colle pas, vérifiez :
 
@@ -83,6 +84,7 @@ Hotkeys utiles (push-to-talk) :
 
 ## Changelog
 
+- `2026-02-26` : `PKvoiceNotchTest` rendu plus visible (affichage différé, niveau de fenêtre plus haut, contour clair, position abaissée sous la barre de menu).
 - `2026-02-26` : Ajout de `PKvoiceNotchTest.app` (sandbox séparé) pour tester le notch indépendamment de `PKvoice`.
 - `2026-02-26` : Correction de la version par défaut du build à `1.10` (affichée dans l'app et injectée dans `Info.plist`).
 - `2026-02-26` : La fenêtre Settings affiche maintenant la version de l'app (`CFBundleShortVersionString` + build).

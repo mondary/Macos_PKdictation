@@ -77,7 +77,8 @@ static void positionNotchWindow(void) {
 	NSRect visible = screen.visibleFrame;
 	NSRect frame = gNotchWindow.frame;
 	CGFloat x = round(NSMidX(visible) - frame.size.width / 2.0);
-	CGFloat y = round(NSMaxY(visible) - frame.size.height - 8.0);
+	// Keep it clearly below the menu bar / hardware notch for testing visibility.
+	CGFloat y = round(NSMaxY(visible) - frame.size.height - 36.0);
 	[gNotchWindow setFrame:NSMakeRect(x, y, frame.size.width, frame.size.height) display:NO];
 }
 
@@ -104,10 +105,10 @@ static void ensureNotchWindow(void) {
 	gNotchWindow.opaque = NO;
 	gNotchWindow.backgroundColor = [NSColor clearColor];
 	gNotchWindow.hasShadow = YES;
-	gNotchWindow.level = NSFloatingWindowLevel;
+	gNotchWindow.level = NSStatusWindowLevel;
 	gNotchWindow.hidesOnDeactivate = NO;
 	gNotchWindow.ignoresMouseEvents = YES;
-	gNotchWindow.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorMoveToActiveSpace | NSWindowCollectionBehaviorTransient;
+	gNotchWindow.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorMoveToActiveSpace | NSWindowCollectionBehaviorTransient | NSWindowCollectionBehaviorFullScreenAuxiliary;
 
 	gNotchBackground = [NSView new];
 	gNotchBackground.frame = ((NSView *)gNotchWindow.contentView).bounds;
@@ -116,6 +117,8 @@ static void ensureNotchWindow(void) {
 	gNotchBackground.layer.cornerRadius = 16.0;
 	gNotchBackground.layer.masksToBounds = YES;
 	gNotchBackground.layer.backgroundColor = [NSColor colorWithCalibratedWhite:0.08 alpha:0.95].CGColor;
+	gNotchBackground.layer.borderWidth = 1.0;
+	gNotchBackground.layer.borderColor = [NSColor colorWithCalibratedWhite:1.0 alpha:0.22].CGColor;
 	[gNotchWindow setContentView:gNotchBackground];
 
 	NSView *content = gNotchBackground;
@@ -188,7 +191,9 @@ static void toggleNotch(void) {
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
 	(void)notification;
 	createControlWindow(self);
-	showNotch();
+	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(250 * NSEC_PER_MSEC)), dispatch_get_main_queue(), ^{
+		showNotch();
+	});
 	[NSApp activateIgnoringOtherApps:YES];
 }
 
@@ -257,7 +262,7 @@ static void createControlWindow(id target) {
 	title.frame = NSMakeRect(20, 146, 380, 22);
 	[content addSubview:title];
 
-	NSTextField *hint = [NSTextField labelWithString:@"Le notch s'affiche en haut-centre. Utilise les boutons ci-dessous pour le montrer / cacher."];
+	NSTextField *hint = [NSTextField labelWithString:@"Le notch s'affiche en haut-centre (abaissé pour le test). Utilise les boutons ci-dessous pour le montrer / cacher."];
 	hint.font = [NSFont systemFontOfSize:12];
 	hint.textColor = [NSColor secondaryLabelColor];
 	hint.frame = NSMakeRect(20, 124, 380, 18);
@@ -314,4 +319,3 @@ import "C"
 func main() {
 	C.runApp()
 }
-
