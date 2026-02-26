@@ -43,6 +43,7 @@ static NSTextField *gNotchLabel = nil;
 static NSWindow *gControlWindow = nil;
 static NSSegmentedControl *gIconSegment = nil;
 static NSPopUpButton *gPatternPopup = nil;
+static NSColorWell *gAccentColorWell = nil;
 static NSInteger gIconStyle = PKNIconStyleWave;
 static NSInteger gSpinnerPattern = PKNSpinnerPatternSpinner;
 static NSImage *gMicroIcon = nil;
@@ -62,6 +63,7 @@ static void hideNotch(void);
 static void toggleNotch(void);
 static void createControlWindow(id target);
 static NSString *spinnerPatternTitle(void);
+static NSColor *currentAccentColor(void);
 
 static NSImage *loadMicroIcon(void) {
 	if (gMicroIcon) return gMicroIcon;
@@ -102,7 +104,7 @@ static NSColor *spinnerBaseColor(void) {
 	return [NSColor colorWithCalibratedWhite:0.20 alpha:1.0]; // #333333
 }
 
-static NSColor *spinnerAccentColor(void) {
+static NSColor *presetAccentColor(void) {
 	if (gIconStyle == PKNIconStyleMicro) {
 		return [NSColor colorWithCalibratedRed:1.0 green:74.0/255.0 blue:74.0/255.0 alpha:1.0];
 	}
@@ -110,11 +112,30 @@ static NSColor *spinnerAccentColor(void) {
 	return [NSColor colorWithCalibratedRed:1.0 green:20.0/255.0 blue:204.0/255.0 alpha:1.0];
 }
 
+static NSColor *currentAccentColor(void) {
+	if (gAccentColorWell && gAccentColorWell.color) return gAccentColorWell.color;
+	return presetAccentColor();
+}
+
+static NSColor *spinnerAccentColor(void) {
+	return currentAccentColor();
+}
+
 static NSColor *spinnerGlowColor(void) {
-	if (gIconStyle == PKNIconStyleMicro) {
-		return [NSColor colorWithCalibratedRed:1.0 green:170.0/255.0 blue:170.0/255.0 alpha:1.0];
+	NSColor *accent = [currentAccentColor() colorUsingColorSpace:[NSColorSpace genericRGBColorSpace]];
+	if (!accent) {
+		if (gIconStyle == PKNIconStyleMicro) {
+			return [NSColor colorWithCalibratedRed:1.0 green:170.0/255.0 blue:170.0/255.0 alpha:1.0];
+		}
+		return [NSColor colorWithCalibratedRed:1.0 green:163.0/255.0 blue:235.0/255.0 alpha:1.0];
 	}
-	return [NSColor colorWithCalibratedRed:1.0 green:163.0/255.0 blue:235.0/255.0 alpha:1.0];
+	CGFloat r = 1, g = 1, b = 1, a = 1;
+	[accent getRed:&r green:&g blue:&b alpha:&a];
+	CGFloat mix = 0.55; // blend toward white for glow
+	return [NSColor colorWithCalibratedRed:(r * (1.0 - mix) + 1.0 * mix)
+	                                 green:(g * (1.0 - mix) + 1.0 * mix)
+	                                  blue:(b * (1.0 - mix) + 1.0 * mix)
+	                                 alpha:1.0];
 }
 
 static NSString *spinnerPatternTitle(void) {
@@ -481,15 +502,11 @@ static void toggleNotch(void) {
 	NSSegmentedControl *seg = (NSSegmentedControl *)sender;
 	if (![seg isKindOfClass:[NSSegmentedControl class]]) return;
 	gIconStyle = seg.selectedSegment;
-	updateNotchAppearance();
-	// Reuse the selector to preview two spinner accents.
-	if (gIconStyle == PKNIconStyleMicro) {
-		for (NSInteger i = 0; i < 9; i++) {
-			if (gSpinnerDots[i] && gSpinnerDots[i].layer) {
-				gSpinnerDots[i].layer.borderWidth = 0.0;
-			}
-		}
+	if (gAccentColorWell) {
+		gAccentColorWell.color = presetAccentColor();
 	}
+	updateNotchAppearance();
+	updateSpinnerFrame();
 	if (gNotchWindow && gNotchWindow.visible) [gNotchWindow orderFrontRegardless];
 }
 
@@ -501,6 +518,16 @@ static void toggleNotch(void) {
 	gSpinnerPattern = idx;
 	gSpinnerStartTime = CACurrentMediaTime();
 	updateNotchAppearance();
+	updateSpinnerFrame();
+	if (gNotchWindow && gNotchWindow.visible) [gNotchWindow orderFrontRegardless];
+}
+
+- (void)accentColorChanged:(id)sender {
+	NSColorWell *well = (NSColorWell *)sender;
+	if (![well isKindOfClass:[NSColorWell class]]) return;
+	if (well.color) {
+		gAccentColorWell.color = well.color;
+	}
 	updateSpinnerFrame();
 	if (gNotchWindow && gNotchWindow.visible) [gNotchWindow orderFrontRegardless];
 }
@@ -521,7 +548,7 @@ static NSButton *makeBtn(NSString *title, id target, SEL action, NSRect frame) {
 static void createControlWindow(id target) {
 	if (gControlWindow) return;
 
-	NSRect frame = NSMakeRect(0, 0, 420, 235);
+	NSRect frame = NSMakeRect(0, 0, 420, 275);
 	gControlWindow = [[NSWindow alloc] initWithContentRect:frame
 		styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable
 		backing:NSBackingStoreBuffered
@@ -533,24 +560,24 @@ static void createControlWindow(id target) {
 
 	NSTextField *title = [NSTextField labelWithString:@"Tester le notch indépendamment de PKvoice"];
 	title.font = [NSFont boldSystemFontOfSize:14];
-	title.frame = NSMakeRect(20, 191, 380, 22);
+	title.frame = NSMakeRect(20, 231, 380, 22);
 	[content addSubview:title];
 
 	NSTextField *hint = [NSTextField labelWithString:@"Le notch s'affiche en haut-centre (abaissé pour le test). Utilise les boutons ci-dessous pour le montrer / cacher."];
 	hint.font = [NSFont systemFontOfSize:12];
 	hint.textColor = [NSColor secondaryLabelColor];
-	hint.frame = NSMakeRect(20, 169, 380, 18);
+	hint.frame = NSMakeRect(20, 209, 380, 18);
 	[content addSubview:hint];
 
 	NSTextField *iconLabel = [NSTextField labelWithString:@"Couleur"];
-	iconLabel.frame = NSMakeRect(20, 132, 80, 20);
+	iconLabel.frame = NSMakeRect(20, 172, 80, 20);
 	[content addSubview:iconLabel];
 
 	gIconSegment = [NSSegmentedControl segmentedControlWithLabels:@[ @"Wave", @"Micro" ]
 		trackingMode:NSSegmentSwitchTrackingSelectOne
 		target:target
 		action:@selector(iconStyleChanged:)];
-	gIconSegment.frame = NSMakeRect(100, 128, 150, 28);
+	gIconSegment.frame = NSMakeRect(100, 168, 150, 28);
 	gIconSegment.selectedSegment = gIconStyle;
 
 	if (@available(macOS 11.0, *)) {
@@ -568,6 +595,16 @@ static void createControlWindow(id target) {
 		[gIconSegment setImage:micro forSegment:1];
 	}
 	[content addSubview:gIconSegment];
+
+	NSTextField *accentLabel = [NSTextField labelWithString:@"Couleur"];
+	accentLabel.frame = NSMakeRect(20, 136, 80, 20);
+	[content addSubview:accentLabel];
+
+	gAccentColorWell = [[NSColorWell alloc] initWithFrame:NSMakeRect(100, 132, 60, 28)];
+	gAccentColorWell.color = presetAccentColor();
+	gAccentColorWell.target = target;
+	gAccentColorWell.action = @selector(accentColorChanged:);
+	[content addSubview:gAccentColorWell];
 
 	NSTextField *patternLabel = [NSTextField labelWithString:@"Pattern"];
 	patternLabel.frame = NSMakeRect(20, 94, 80, 20);
