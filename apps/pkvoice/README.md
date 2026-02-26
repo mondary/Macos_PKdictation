@@ -49,9 +49,10 @@ open release/PKvoiceNotchTest.app
 
 Cette app ouvre une petite fenêtre de contrôle avec :
 - `Afficher` / `Masquer` / `Toggle`
-- choix d'icône `Wave` / `Micro`
+- choix de style spinner `Wave` / `Micro`
 - `Recentrer` (si tu changes d'écran / espace)
 - le notch de test est volontairement **abaissé** sous la barre de menu pour être plus visible
+- un spinner **dot-matrix 3x3** animé en rotation (clockwise), inspiré du CSS de référence
 
 Note:
 - lance de préférence le sandbox via `open release/PKvoiceNotchTest.app` (mode GUI normal)
@@ -87,6 +88,7 @@ Hotkeys utiles (push-to-talk) :
 
 ## Changelog
 
+- `2026-02-26` : `PKvoiceNotchTest` utilise maintenant un spinner **dot-matrix 3x3** animé (clockwise) inspiré du CSS fourni (accent magenta/glow, variante rouge en mode `Micro`).
 - `2026-02-26` : Correctif `PKvoiceNotchTest` : suppression d'une combinaison invalide de `collectionBehavior` (`canJoinAllSpaces` + `moveToActiveSpace`) qui provoquait un crash AppKit ; alignement partiel sur le pattern `NSPanel` de `notchprompt`.
 - `2026-02-26` : `PKvoiceNotchTest` rendu plus visible (affichage différé, niveau de fenêtre plus haut, contour clair, position abaissée sous la barre de menu).
 - `2026-02-26` : Ajout de `PKvoiceNotchTest.app` (sandbox séparé) pour tester le notch indépendamment de `PKvoice`.

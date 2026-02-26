@@ -4,9 +4,10 @@ package main
 
 /*
 #cgo CFLAGS: -x objective-c -fobjc-arc
-#cgo LDFLAGS: -framework Cocoa
+#cgo LDFLAGS: -framework Cocoa -framework QuartzCore
 
 #import <Cocoa/Cocoa.h>
+#import <QuartzCore/QuartzCore.h>
 
 typedef NS_ENUM(NSInteger, PKNIconStyle) {
 	PKNIconStyleWave = 0,
@@ -23,7 +24,10 @@ typedef NS_ENUM(NSInteger, PKNIconStyle) {
 
 static NSPanel *gNotchWindow = nil;
 static NSView *gNotchBackground = nil;
-static NSImageView *gNotchIconView = nil;
+static NSView *gSpinnerContainer = nil;
+static NSView *gSpinnerDots[9] = { nil };
+static NSTimer *gSpinnerTimer = nil;
+static NSInteger gSpinnerStep = 0;
 static NSTextField *gNotchLabel = nil;
 static NSWindow *gControlWindow = nil;
 static NSSegmentedControl *gIconSegment = nil;
@@ -34,6 +38,9 @@ static id gAppDelegate = nil;
 static void ensureNotchWindow(void);
 static void positionNotchWindow(void);
 static void updateNotchAppearance(void);
+static void updateSpinnerFrame(void);
+static void startSpinner(void);
+static void stopSpinner(void);
 static void showNotch(void);
 static void hideNotch(void);
 static void toggleNotch(void);
@@ -74,6 +81,68 @@ static NSImage *currentIcon(void) {
 	return img;
 }
 
+static NSColor *spinnerBaseColor(void) {
+	return [NSColor colorWithCalibratedWhite:0.20 alpha:1.0]; // #333333
+}
+
+static NSColor *spinnerAccentColor(void) {
+	if (gIconStyle == PKNIconStyleMicro) {
+		return [NSColor colorWithCalibratedRed:1.0 green:74.0/255.0 blue:74.0/255.0 alpha:1.0];
+	}
+	// Inspired by user's CSS sample (#FF14CC)
+	return [NSColor colorWithCalibratedRed:1.0 green:20.0/255.0 blue:204.0/255.0 alpha:1.0];
+}
+
+static NSColor *spinnerGlowColor(void) {
+	if (gIconStyle == PKNIconStyleMicro) {
+		return [NSColor colorWithCalibratedRed:1.0 green:170.0/255.0 blue:170.0/255.0 alpha:1.0];
+	}
+	return [NSColor colorWithCalibratedRed:1.0 green:163.0/255.0 blue:235.0/255.0 alpha:1.0];
+}
+
+static void applyDotStyle(NSView *dot, BOOL active) {
+	if (!dot || !dot.layer) return;
+	dot.layer.backgroundColor = (active ? spinnerAccentColor() : spinnerBaseColor()).CGColor;
+	dot.layer.shadowColor = spinnerGlowColor().CGColor;
+	dot.layer.shadowOpacity = active ? 0.95 : 0.0;
+	dot.layer.shadowRadius = active ? 6.0 : 0.0;
+	dot.layer.shadowOffset = CGSizeZero;
+	dot.layer.transform = active ? CATransform3DMakeScale(1.12, 1.12, 1.0) : CATransform3DIdentity;
+}
+
+static void updateSpinnerFrame(void) {
+	if (!gSpinnerContainer) return;
+	static const NSInteger order[8] = {0, 1, 2, 5, 8, 7, 6, 3}; // clockwise perimeter
+	NSInteger activeIdx = order[(NSUInteger)(gSpinnerStep % 8)];
+
+	for (NSInteger i = 0; i < 9; i++) {
+		BOOL active = (i == activeIdx);
+		if (i == 4) active = NO; // center stays muted like a matrix hub
+		applyDotStyle(gSpinnerDots[i], active);
+	}
+
+	gSpinnerStep = (gSpinnerStep + 1) % 8;
+}
+
+static void startSpinner(void) {
+	if (gSpinnerTimer) return;
+	updateSpinnerFrame();
+	gSpinnerTimer = [NSTimer scheduledTimerWithTimeInterval:0.25 repeats:YES block:^(__unused NSTimer *timer) {
+		updateSpinnerFrame();
+	}];
+	[[NSRunLoop mainRunLoop] addTimer:gSpinnerTimer forMode:NSRunLoopCommonModes];
+}
+
+static void stopSpinner(void) {
+	if (gSpinnerTimer) {
+		[gSpinnerTimer invalidate];
+		gSpinnerTimer = nil;
+	}
+	for (NSInteger i = 0; i < 9; i++) {
+		applyDotStyle(gSpinnerDots[i], NO);
+	}
+}
+
 static void positionNotchWindow(void) {
 	if (!gNotchWindow) return;
 	NSScreen *screen = [NSScreen mainScreen];
@@ -93,19 +162,15 @@ static void positionNotchWindow(void) {
 
 static void updateNotchAppearance(void) {
 	if (!gNotchWindow) return;
-	if (gNotchIconView) {
-		gNotchIconView.image = currentIcon();
-		gNotchIconView.contentTintColor = (gIconStyle == PKNIconStyleWave) ? [NSColor whiteColor] : nil;
-	}
 	if (gNotchLabel) {
-		gNotchLabel.stringValue = (gIconStyle == PKNIconStyleWave) ? @"Notch test · Wave" : @"Notch test · Micro";
+		gNotchLabel.stringValue = @"Listening…";
 	}
 }
 
 static void ensureNotchWindow(void) {
 	if (gNotchWindow) return;
 
-	NSRect frame = NSMakeRect(0, 0, 300, 48);
+	NSRect frame = NSMakeRect(0, 0, 316, 52);
 	gNotchWindow = [[PKNOverlayPanel alloc] initWithContentRect:frame
 		styleMask:NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel
 		backing:NSBackingStoreBuffered
@@ -133,18 +198,24 @@ static void ensureNotchWindow(void) {
 
 	NSView *content = gNotchBackground;
 
-	NSView *dot = [NSView new];
-	dot.translatesAutoresizingMaskIntoConstraints = NO;
-	dot.wantsLayer = YES;
-	dot.layer.cornerRadius = 4.5;
-	dot.layer.masksToBounds = YES;
-	dot.layer.backgroundColor = [NSColor systemRedColor].CGColor;
-	[content addSubview:dot];
+	gSpinnerContainer = [NSView new];
+	gSpinnerContainer.translatesAutoresizingMaskIntoConstraints = NO;
+	gSpinnerContainer.wantsLayer = YES;
+	[content addSubview:gSpinnerContainer];
 
-	gNotchIconView = [NSImageView new];
-	gNotchIconView.translatesAutoresizingMaskIntoConstraints = NO;
-	gNotchIconView.imageScaling = NSImageScaleProportionallyDown;
-	[content addSubview:gNotchIconView];
+	const CGFloat dotSize = 6.0;
+	const CGFloat gap = 2.0;
+	for (NSInteger i = 0; i < 9; i++) {
+		NSInteger row = i / 3;
+		NSInteger col = i % 3;
+		NSView *d = [[NSView alloc] initWithFrame:NSMakeRect(col * (dotSize + gap), (2 - row) * (dotSize + gap), dotSize, dotSize)];
+		d.wantsLayer = YES;
+		d.layer.cornerRadius = 1.5;
+		d.layer.masksToBounds = NO;
+		d.layer.backgroundColor = spinnerBaseColor().CGColor;
+		gSpinnerDots[i] = d;
+		[gSpinnerContainer addSubview:d];
+	}
 
 	gNotchLabel = [NSTextField labelWithString:@"Notch test"];
 	gNotchLabel.translatesAutoresizingMaskIntoConstraints = NO;
@@ -154,22 +225,18 @@ static void ensureNotchWindow(void) {
 	[content addSubview:gNotchLabel];
 
 	[NSLayoutConstraint activateConstraints:@[
-		[dot.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:14],
-		[dot.centerYAnchor constraintEqualToAnchor:content.centerYAnchor],
-		[dot.widthAnchor constraintEqualToConstant:9],
-		[dot.heightAnchor constraintEqualToConstant:9],
+		[gSpinnerContainer.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:14],
+		[gSpinnerContainer.centerYAnchor constraintEqualToAnchor:content.centerYAnchor],
+		[gSpinnerContainer.widthAnchor constraintEqualToConstant:22],
+		[gSpinnerContainer.heightAnchor constraintEqualToConstant:22],
 
-		[gNotchIconView.leadingAnchor constraintEqualToAnchor:dot.trailingAnchor constant:9],
-		[gNotchIconView.centerYAnchor constraintEqualToAnchor:content.centerYAnchor],
-		[gNotchIconView.widthAnchor constraintEqualToConstant:18],
-		[gNotchIconView.heightAnchor constraintEqualToConstant:18],
-
-		[gNotchLabel.leadingAnchor constraintEqualToAnchor:gNotchIconView.trailingAnchor constant:8],
+		[gNotchLabel.leadingAnchor constraintEqualToAnchor:gSpinnerContainer.trailingAnchor constant:10],
 		[gNotchLabel.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-14],
 		[gNotchLabel.centerYAnchor constraintEqualToAnchor:content.centerYAnchor],
 	]];
 
 	updateNotchAppearance();
+	stopSpinner();
 	positionNotchWindow();
 }
 
@@ -177,12 +244,14 @@ static void showNotch(void) {
 	ensureNotchWindow();
 	updateNotchAppearance();
 	positionNotchWindow();
+	startSpinner();
 	[gNotchWindow orderFrontRegardless];
 	[gNotchWindow makeKeyAndOrderFront:nil];
 }
 
 static void hideNotch(void) {
 	if (!gNotchWindow) return;
+	stopSpinner();
 	[gNotchWindow orderOut:nil];
 }
 
@@ -249,6 +318,14 @@ static void toggleNotch(void) {
 	if (![seg isKindOfClass:[NSSegmentedControl class]]) return;
 	gIconStyle = seg.selectedSegment;
 	updateNotchAppearance();
+	// Reuse the selector to preview two spinner accents.
+	if (gIconStyle == PKNIconStyleMicro) {
+		for (NSInteger i = 0; i < 9; i++) {
+			if (gSpinnerDots[i] && gSpinnerDots[i].layer) {
+				gSpinnerDots[i].layer.borderWidth = 0.0;
+			}
+		}
+	}
 	if (gNotchWindow && gNotchWindow.visible) [gNotchWindow orderFrontRegardless];
 }
 
@@ -289,7 +366,7 @@ static void createControlWindow(id target) {
 	hint.frame = NSMakeRect(20, 124, 380, 18);
 	[content addSubview:hint];
 
-	NSTextField *iconLabel = [NSTextField labelWithString:@"Icône"];
+	NSTextField *iconLabel = [NSTextField labelWithString:@"Style spinner"];
 	iconLabel.frame = NSMakeRect(20, 92, 80, 20);
 	[content addSubview:iconLabel];
 
