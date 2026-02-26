@@ -71,6 +71,7 @@ Hotkeys utiles (push-to-talk) :
 
 ## Changelog
 
+- `2026-02-26` : Correctif stabilité : notch simplifié (fenêtre borderless classique) pour éviter un crash au déclenchement de l'enregistrement (`Fn`).
 - `2026-02-26` : Notch d'enregistrement renforcé (plus visible, animation d'apparition/disparition, meilleure visibilité en espaces plein écran).
 - `2026-02-26` : Correction de la version par défaut du build à `1.10` (affichée dans l'app et injectée dans `Info.plist`).
 - `2026-02-26` : Ajout d'un overlay type **notch** (haut-centre) visible pendant l'enregistrement pour indiquer clairement l'écoute en cours.

@@ -54,7 +54,7 @@ static NSButton *gPopoverHistoryButtons[10] = { nil };
 static NSButton *gPopoverQuitButton = nil;
 static NSStackView *gPopoverStack = nil;
 static NSPanel *gRecordingNotchWindow = nil;
-static NSVisualEffectView *gRecordingNotchBackground = nil;
+static NSView *gRecordingNotchBackground = nil;
 static NSImageView *gRecordingNotchIconView = nil;
 static NSTextField *gRecordingNotchLabel = nil;
 static id gMenuHandler = nil;
@@ -506,11 +506,6 @@ static void updateRecordingNotchState(void) {
 		gRecordingNotchIconView.image = makeRecordingNotchIcon();
 		gRecordingNotchIconView.contentTintColor = [NSColor whiteColor];
 	}
-	if (gRecordingNotchBackground) {
-		gRecordingNotchBackground.material = NSVisualEffectMaterialHUDWindow;
-		gRecordingNotchBackground.blendingMode = NSVisualEffectBlendingModeWithinWindow;
-		gRecordingNotchBackground.state = NSVisualEffectStateActive;
-	}
 }
 
 static void ensureRecordingNotch(void) {
@@ -525,19 +520,19 @@ static void ensureRecordingNotch(void) {
 	gRecordingNotchWindow.opaque = NO;
 	gRecordingNotchWindow.backgroundColor = [NSColor clearColor];
 	gRecordingNotchWindow.hasShadow = YES;
-	gRecordingNotchWindow.level = NSMainMenuWindowLevel + 2;
+	gRecordingNotchWindow.level = NSFloatingWindowLevel;
 	gRecordingNotchWindow.hidesOnDeactivate = NO;
 	gRecordingNotchWindow.movable = NO;
 	gRecordingNotchWindow.ignoresMouseEvents = YES;
-	gRecordingNotchWindow.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorTransient | NSWindowCollectionBehaviorMoveToActiveSpace | NSWindowCollectionBehaviorFullScreenAuxiliary;
-	gRecordingNotchWindow.alphaValue = 0.0;
+	gRecordingNotchWindow.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorTransient | NSWindowCollectionBehaviorMoveToActiveSpace;
 
-	gRecordingNotchBackground = [NSVisualEffectView new];
+	gRecordingNotchBackground = [NSView new];
 	gRecordingNotchBackground.frame = ((NSView *)gRecordingNotchWindow.contentView).bounds;
 	gRecordingNotchBackground.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
 	gRecordingNotchBackground.wantsLayer = YES;
 	gRecordingNotchBackground.layer.cornerRadius = 16.0;
 	gRecordingNotchBackground.layer.masksToBounds = YES;
+	gRecordingNotchBackground.layer.backgroundColor = [NSColor colorWithCalibratedWhite:0.08 alpha:0.92].CGColor;
 	[gRecordingNotchWindow setContentView:gRecordingNotchBackground];
 
 	NSView *content = gRecordingNotchBackground;
@@ -586,22 +581,12 @@ static void showRecordingNotch(void) {
 	ensureRecordingNotch();
 	updateRecordingNotchState();
 	positionRecordingNotchWindow();
-	[gRecordingNotchWindow setAlphaValue:0.0];
 	[gRecordingNotchWindow orderFrontRegardless];
-	[NSAnimationContext runAnimationGroup:^(NSAnimationContext * _Nonnull context) {
-		context.duration = 0.12;
-		[[gRecordingNotchWindow animator] setAlphaValue:1.0];
-	} completionHandler:nil];
 }
 
 static void hideRecordingNotch(void) {
 	if (!gRecordingNotchWindow) return;
-	[NSAnimationContext runAnimationGroup:^(NSAnimationContext * _Nonnull context) {
-		context.duration = 0.10;
-		[[gRecordingNotchWindow animator] setAlphaValue:0.0];
-	} completionHandler:^{
-		[gRecordingNotchWindow orderOut:nil];
-	}];
+	[gRecordingNotchWindow orderOut:nil];
 }
 
 static void ensurePopover(void) {
