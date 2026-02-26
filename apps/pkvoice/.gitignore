@@ -20,6 +20,17 @@ go/dist
 .cache/
 src/.cache/
 
+# Secrets / local config
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.mobileprovision
+*.cer
+*.crt
+
 # Temporary files
 *.swp
 *.swo
