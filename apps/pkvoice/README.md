@@ -1,0 +1,62 @@
+# PKvoice (macOS / Go)
+
+Une petite app macOS en Go (avec bindings Objective‑C via cgo) qui :
+
+- écoute une touche globale en mode *push‑to‑talk*
+- enregistre votre voix pendant que vous maintenez la touche
+- transcrit via le framework Apple **Speech**
+- copie le texte dans le presse‑papiers et le colle à l’endroit du curseur (Cmd+V)
+
+## Structure du dossier
+
+- `README.md` : documentation projet
+- `src/` : script de build + dossiers du projet
+- `src/app/` : code Go (module + sources)
+- `src/assets/` : icônes et assets
+- `release/` : sorties de build (`.app`)
+
+## Prérequis
+
+- macOS 12+ recommandé
+- Go 1.22+
+- Autorisations macOS à accorder à l’app :
+  - **Microphone**
+  - **Reconnaissance vocale**
+  - **Surveillance de saisie** (*Input Monitoring*) pour capter la touche globale
+  - **Accessibilité** pour envoyer Cmd+V
+
+## Build (en .app)
+
+```bash
+./src/build-app.sh
+open release/PKvoice.app
+```
+
+À la première exécution, macOS va demander les autorisations. Si ça ne colle pas, vérifiez :
+
+- Réglages Système → Confidentialité et sécurité → **Accessibilité**
+- Réglages Système → Confidentialité et sécurité → **Surveillance de saisie**
+
+## Utilisation
+
+- Par défaut : maintenir **Fn** pour parler, relâcher pour coller la transcription.
+- Menu barre “PKT” :
+  - **Transcript (auto-paste)** : toggle (si OFF, ça copie seulement dans le clipboard, sans coller)
+  - **Settings…** : ouvre la fenêtre de réglages
+  - **Historique (10)** : affiche les 10 dernières transcriptions (clic pour copier)
+  - Quitter : *Quitter PKvoice*
+
+### Choisir une touche / locale
+
+L’app accepte des flags si vous lancez le binaire directement (dans l’app bundle : `Contents/MacOS/pkvoice`) :
+
+```bash
+release/PKvoice.app/Contents/MacOS/pkvoice --hotkey f7 --locale fr-FR
+```
+
+`--hotkey` accepte aussi un keycode macOS (ex: `0x61` pour F6).
+
+Hotkeys utiles (push-to-talk) :
+- `fn` (maintenir)
+- `rcmd` / `cmd` (maintenir)
+- `ropt` / `lopt` (maintenir)
