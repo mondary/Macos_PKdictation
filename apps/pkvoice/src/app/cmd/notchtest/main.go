@@ -13,6 +13,14 @@ typedef NS_ENUM(NSInteger, PKNIconStyle) {
 	PKNIconStyleMicro = 1,
 };
 
+@interface PKNOverlayPanel : NSPanel
+@end
+
+@implementation PKNOverlayPanel
+- (BOOL)canBecomeKeyWindow { return YES; }
+- (BOOL)canBecomeMainWindow { return NO; }
+@end
+
 static NSPanel *gNotchWindow = nil;
 static NSView *gNotchBackground = nil;
 static NSImageView *gNotchIconView = nil;
@@ -21,6 +29,7 @@ static NSWindow *gControlWindow = nil;
 static NSSegmentedControl *gIconSegment = nil;
 static NSInteger gIconStyle = PKNIconStyleWave;
 static NSImage *gMicroIcon = nil;
+static id gAppDelegate = nil;
 
 static void ensureNotchWindow(void);
 static void positionNotchWindow(void);
@@ -97,18 +106,19 @@ static void ensureNotchWindow(void) {
 	if (gNotchWindow) return;
 
 	NSRect frame = NSMakeRect(0, 0, 300, 48);
-	gNotchWindow = [[NSPanel alloc] initWithContentRect:frame
+	gNotchWindow = [[PKNOverlayPanel alloc] initWithContentRect:frame
 		styleMask:NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel
 		backing:NSBackingStoreBuffered
 		defer:NO];
 	gNotchWindow.releasedWhenClosed = NO;
 	gNotchWindow.opaque = NO;
 	gNotchWindow.backgroundColor = [NSColor clearColor];
-	gNotchWindow.hasShadow = YES;
-	gNotchWindow.level = NSStatusWindowLevel;
+	gNotchWindow.hasShadow = NO;
+	gNotchWindow.level = NSScreenSaverWindowLevel;
 	gNotchWindow.hidesOnDeactivate = NO;
 	gNotchWindow.ignoresMouseEvents = YES;
-	gNotchWindow.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorMoveToActiveSpace | NSWindowCollectionBehaviorTransient | NSWindowCollectionBehaviorFullScreenAuxiliary;
+	gNotchWindow.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorTransient | NSWindowCollectionBehaviorFullScreenAuxiliary | NSWindowCollectionBehaviorStationary | NSWindowCollectionBehaviorIgnoresCycle;
+	gNotchWindow.becomesKeyOnlyIfNeeded = YES;
 
 	gNotchBackground = [NSView new];
 	gNotchBackground.frame = ((NSView *)gNotchWindow.contentView).bounds;
@@ -168,6 +178,7 @@ static void showNotch(void) {
 	updateNotchAppearance();
 	positionNotchWindow();
 	[gNotchWindow orderFrontRegardless];
+	[gNotchWindow makeKeyAndOrderFront:nil];
 }
 
 static void hideNotch(void) {
@@ -190,11 +201,21 @@ static void toggleNotch(void) {
 @implementation PKNHandler
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
 	(void)notification;
-	createControlWindow(self);
-	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(250 * NSEC_PER_MSEC)), dispatch_get_main_queue(), ^{
-		showNotch();
-	});
-	[NSApp activateIgnoringOtherApps:YES];
+	@try {
+		NSLog(@"[PKvoiceNotchTest] didFinishLaunching");
+		createControlWindow(self);
+		dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(250 * NSEC_PER_MSEC)), dispatch_get_main_queue(), ^{
+			@try {
+				NSLog(@"[PKvoiceNotchTest] showing notch");
+				showNotch();
+			} @catch (NSException *e) {
+				NSLog(@"[PKvoiceNotchTest] showNotch exception: %@ %@", e.name, e.reason);
+			}
+		});
+		[NSApp activateIgnoringOtherApps:YES];
+	} @catch (NSException *e) {
+		NSLog(@"[PKvoiceNotchTest] launch exception: %@ %@", e.name, e.reason);
+	}
 }
 
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)sender {
@@ -308,8 +329,8 @@ static void runApp(void) {
 	@autoreleasepool {
 		[NSApplication sharedApplication];
 		[NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
-		PKNHandler *handler = [PKNHandler new];
-		[NSApp setDelegate:handler];
+		gAppDelegate = [PKNHandler new];
+		[NSApp setDelegate:gAppDelegate];
 		[NSApp run];
 	}
 }
