@@ -599,7 +599,7 @@ static void showSettingsWindow(void) {
 		return;
 	}
 
-	NSRect frame = NSMakeRect(0, 0, 460, 330);
+	NSRect frame = NSMakeRect(0, 0, 460, 350);
 	NSWindowStyleMask style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable;
 	gSettingsWindow = [[NSWindow alloc] initWithContentRect:frame styleMask:style backing:NSBackingStoreBuffered defer:NO];
 	gSettingsWindow.title = @"PKvoice — Settings";
@@ -629,7 +629,9 @@ static void showSettingsWindow(void) {
 
 	NSString *hotkey = hotkeyTitle() ?: @"";
 	NSString *locale = (gLocaleIdentifier && gLocaleIdentifier.length > 0) ? gLocaleIdentifier : @"system";
-	NSTextField *subtitle = [NSTextField labelWithString:[NSString stringWithFormat:@"%@\nLocale : %@", hotkey, locale]];
+	NSString *appVersion = [[[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"] description] ?: @"?";
+	NSString *appBuild = [[[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleVersion"] description] ?: @"?";
+	NSTextField *subtitle = [NSTextField labelWithString:[NSString stringWithFormat:@"%@\nLocale : %@\nVersion : %@ (build %@)", hotkey, locale, appVersion, appBuild]];
 	subtitle.font = [NSFont systemFontOfSize:12];
 	subtitle.textColor = [NSColor secondaryLabelColor];
 	subtitle.lineBreakMode = NSLineBreakByWordWrapping;
@@ -679,6 +681,24 @@ static void showSettingsWindow(void) {
 
 	gSettingsStatusIconSegment = [NSSegmentedControl segmentedControlWithLabels:@[ @"Wave", @"Micro" ] trackingMode:NSSegmentSwitchTrackingSelectOne target:gMenuHandler action:@selector(settingsStatusIconChanged:)];
 	gSettingsStatusIconSegment.selectedSegment = gStatusIconStyle;
+	if (@available(macOS 11.0, *)) {
+		NSImage *waveIcon = [NSImage imageWithSystemSymbolName:@"waveform" accessibilityDescription:@"Wave"];
+		if (waveIcon) {
+			[waveIcon setSize:NSMakeSize(16, 16)];
+			[gSettingsStatusIconSegment setLabel:@"" forSegment:0];
+			[gSettingsStatusIconSegment setImage:waveIcon forSegment:0];
+		}
+	}
+	NSBundle *bundle = [NSBundle mainBundle];
+	NSString *microIconPath = [bundle pathForResource:@"PKvoice" ofType:@"icns"];
+	if (microIconPath) {
+		NSImage *microIcon = [[NSImage alloc] initWithContentsOfFile:microIconPath];
+		if (microIcon) {
+			[microIcon setSize:NSMakeSize(16, 16)];
+			[gSettingsStatusIconSegment setLabel:@"" forSegment:1];
+			[gSettingsStatusIconSegment setImage:microIcon forSegment:1];
+		}
+	}
 	gSettingsStatusIconSegment.translatesAutoresizingMaskIntoConstraints = NO;
 	[content addSubview:gSettingsStatusIconSegment];
 

@@ -32,6 +32,12 @@ Une petite app macOS en Go (avec bindings Objective‑C via cgo) qui :
 open release/PKvoice.app
 ```
 
+Build avec version explicite :
+
+```bash
+APP_VERSION=0.1.1 APP_BUILD=1 ./src/build-app.sh
+```
+
 À la première exécution, macOS va demander les autorisations. Si ça ne colle pas, vérifiez :
 
 - Réglages Système → Confidentialité et sécurité → **Accessibilité**
@@ -63,6 +69,9 @@ Hotkeys utiles (push-to-talk) :
 
 ## Changelog
 
+- `2026-02-26` : La fenêtre Settings affiche maintenant la version de l'app (`CFBundleShortVersionString` + build).
+- `2026-02-26` : Le build accepte `APP_VERSION` et `APP_BUILD` et les injecte dans `Info.plist`.
+- `2026-02-26` : Le choix d'icône menubar affiche directement les icônes (wave + picto micro) au lieu de labels texte.
 - `2026-02-26` : Ajout d'une option de réglages pour choisir l'icône menubar (`Wave` ou `Micro`) avec persistance (`NSUserDefaults`).
 - `2026-02-26` : Renommage du projet `PKTranscript` -> `PKvoice` (bundle, binaire, assets, README).
 - `2026-02-26` : Restructuration du dossier (`README.md` + `src/` + `release/`) et adaptation du script de build.

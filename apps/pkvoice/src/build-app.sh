@@ -3,6 +3,8 @@ set -euo pipefail
 
 APP_NAME="PKvoice"
 BUNDLE_ID="com.example.pkvoice"
+APP_VERSION="${APP_VERSION:-0.1.1}"
+APP_BUILD="${APP_BUILD:-1}"
 
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SRC_DIR/.." && pwd)"
@@ -20,7 +22,7 @@ export GOCACHE="${GOCACHE:-$GO_CACHE_DIR/build}"
 export GOMODCACHE="${GOMODCACHE:-$GO_CACHE_DIR/mod}"
 mkdir -p "$GOCACHE" "$GOMODCACHE"
 
-echo "Building binary..."
+echo "Building binary... (${APP_VERSION} / build ${APP_BUILD})"
 ARCH="${GOARCH:-}"
 if [[ -z "$ARCH" ]]; then
   case "$(uname -m)" in
@@ -48,8 +50,8 @@ cat > "$APP_DIR/Contents/Info.plist" <<EOF
   <key>CFBundleName</key><string>${APP_NAME}</string>
   <key>CFBundleDisplayName</key><string>${APP_NAME}</string>
   <key>CFBundleIdentifier</key><string>${BUNDLE_ID}</string>
-  <key>CFBundleVersion</key><string>1</string>
-  <key>CFBundleShortVersionString</key><string>0.1.0</string>
+  <key>CFBundleVersion</key><string>${APP_BUILD}</string>
+  <key>CFBundleShortVersionString</key><string>${APP_VERSION}</string>
   <key>CFBundleExecutable</key><string>pkvoice</string>
   <key>CFBundleIconFile</key><string>PKvoice</string>
   <key>CFBundleIconName</key><string>PKvoice</string>
@@ -66,3 +68,4 @@ echo "Ad-hoc signing (recommended for permissions prompts)..."
 codesign --force --deep --sign - "$APP_DIR" >/dev/null 2>&1 || true
 
 echo "Built: $APP_DIR"
+echo "Version: ${APP_VERSION} (build ${APP_BUILD})"
