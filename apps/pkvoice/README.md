@@ -46,7 +46,6 @@ APP_VERSION=1.10 APP_BUILD=1 ./src/build-app.sh
 ## Utilisation
 
 - Par défaut : maintenir **Fn** pour parler, relâcher pour coller la transcription.
-- Un indicateur visuel type **notch** apparaît en haut de l'écran pendant l'enregistrement.
 - Menu barre “PKT” :
   - **Transcript (auto-paste)** : toggle (si OFF, ça copie seulement dans le clipboard, sans coller)
   - **Settings…** : ouvre la fenêtre de réglages
@@ -71,7 +70,6 @@ Hotkeys utiles (push-to-talk) :
 ## Changelog
 
 - `2026-02-26` : Correction de la version par défaut du build à `1.10` (affichée dans l'app et injectée dans `Info.plist`).
-- `2026-02-26` : Ajout d'un overlay type **notch** (haut-centre) visible pendant l'enregistrement pour indiquer clairement l'écoute en cours.
 - `2026-02-26` : La fenêtre Settings affiche maintenant la version de l'app (`CFBundleShortVersionString` + build).
 - `2026-02-26` : Le build accepte `APP_VERSION` et `APP_BUILD` et les injecte dans `Info.plist`.
 - `2026-02-26` : Le choix d'icône menubar affiche directement les icônes (wave + picto micro) au lieu de labels texte.

@@ -53,10 +53,6 @@ static NSTextField *gPopoverHistoryHeader = nil;
 static NSButton *gPopoverHistoryButtons[10] = { nil };
 static NSButton *gPopoverQuitButton = nil;
 static NSStackView *gPopoverStack = nil;
-static NSPanel *gRecordingNotchWindow = nil;
-static NSVisualEffectView *gRecordingNotchBackground = nil;
-static NSImageView *gRecordingNotchIconView = nil;
-static NSTextField *gRecordingNotchLabel = nil;
 static id gMenuHandler = nil;
 static id gFlagsChangedMonitor = nil;
 static id gFlagsChangedLocalMonitor = nil;
@@ -87,10 +83,6 @@ static void applyGlassTheme(void);
 static NSImage *makeStatusIcon(BOOL recording);
 static void updateStatusItemIcon(void);
 static void applySettingsTheme(void);
-static void ensureRecordingNotch(void);
-static void showRecordingNotch(void);
-static void hideRecordingNotch(void);
-static void updateRecordingNotchState(void);
 
 @interface MenuHandler : NSObject
 @end
@@ -159,7 +151,6 @@ static void updateRecordingNotchState(void);
 	gStatusIconStyle = v;
 	[[NSUserDefaults standardUserDefaults] setInteger:gStatusIconStyle forKey:@"statusIconStyle"];
 	updateStatusItemIcon();
-	updateRecordingNotchState();
 	updateMenuState();
 }
 @end
@@ -453,144 +444,6 @@ static void applySettingsTheme(void) {
 		gSettingsBackground.blendingMode = NSVisualEffectBlendingModeWithinWindow;
 		gSettingsBackground.state = NSVisualEffectStateActive;
 	}
-}
-
-static NSImage *makeRecordingNotchIcon(void) {
-	if (gStatusIconStyle == PKTStatusIconStyleWave) {
-		if (@available(macOS 11.0, *)) {
-			NSImage *wave = [NSImage imageWithSystemSymbolName:@"waveform" accessibilityDescription:@"Recording"];
-			if (wave) {
-				[wave setSize:NSMakeSize(15, 15)];
-				wave.template = YES;
-				return wave;
-			}
-		}
-	}
-
-	if (!gStatusBaseIcon) {
-		NSBundle *bundle = [NSBundle mainBundle];
-		NSString *iconPath = [bundle pathForResource:@"PKvoice" ofType:@"icns"];
-		if (iconPath) {
-			gStatusBaseIcon = [[NSImage alloc] initWithContentsOfFile:iconPath];
-		}
-	}
-	if (!gStatusBaseIcon) return nil;
-
-	NSImage *img = [gStatusBaseIcon copy];
-	[img setSize:NSMakeSize(15, 15)];
-	return img;
-}
-
-static void positionRecordingNotchWindow(void) {
-	if (!gRecordingNotchWindow) return;
-	NSScreen *screen = [NSScreen mainScreen];
-	if (!screen) {
-		NSArray<NSScreen *> *screens = [NSScreen screens];
-		if (screens.count > 0) screen = screens[0];
-	}
-	if (!screen) return;
-
-	NSRect visible = screen.visibleFrame;
-	NSRect current = gRecordingNotchWindow.frame;
-	CGFloat x = round(NSMidX(visible) - current.size.width / 2.0);
-	CGFloat y = round(NSMaxY(visible) - current.size.height - 6.0);
-	[gRecordingNotchWindow setFrame:NSMakeRect(x, y, current.size.width, current.size.height) display:NO];
-}
-
-static void updateRecordingNotchState(void) {
-	if (!gRecordingNotchWindow) return;
-	if (gRecordingNotchLabel) {
-		gRecordingNotchLabel.stringValue = gIsRecording ? @"Enregistrement en cours" : @"Enregistrement";
-	}
-	if (gRecordingNotchIconView) {
-		gRecordingNotchIconView.image = makeRecordingNotchIcon();
-		gRecordingNotchIconView.contentTintColor = [NSColor whiteColor];
-	}
-	if (gRecordingNotchBackground) {
-		gRecordingNotchBackground.material = NSVisualEffectMaterialHUDWindow;
-		gRecordingNotchBackground.blendingMode = NSVisualEffectBlendingModeWithinWindow;
-		gRecordingNotchBackground.state = NSVisualEffectStateActive;
-	}
-}
-
-static void ensureRecordingNotch(void) {
-	if (gRecordingNotchWindow) return;
-
-	NSRect frame = NSMakeRect(0, 0, 260, 42);
-	gRecordingNotchWindow = [[NSPanel alloc] initWithContentRect:frame
-		styleMask:NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel
-		backing:NSBackingStoreBuffered
-		defer:NO];
-	gRecordingNotchWindow.releasedWhenClosed = NO;
-	gRecordingNotchWindow.opaque = NO;
-	gRecordingNotchWindow.backgroundColor = [NSColor clearColor];
-	gRecordingNotchWindow.hasShadow = YES;
-	gRecordingNotchWindow.level = NSStatusWindowLevel + 1;
-	gRecordingNotchWindow.hidesOnDeactivate = NO;
-	gRecordingNotchWindow.movable = NO;
-	gRecordingNotchWindow.ignoresMouseEvents = YES;
-	gRecordingNotchWindow.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorTransient;
-
-	gRecordingNotchBackground = [NSVisualEffectView new];
-	gRecordingNotchBackground.frame = ((NSView *)gRecordingNotchWindow.contentView).bounds;
-	gRecordingNotchBackground.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
-	gRecordingNotchBackground.wantsLayer = YES;
-	gRecordingNotchBackground.layer.cornerRadius = 14.0;
-	gRecordingNotchBackground.layer.masksToBounds = YES;
-	[gRecordingNotchWindow setContentView:gRecordingNotchBackground];
-
-	NSView *content = gRecordingNotchBackground;
-
-	NSView *dot = [NSView new];
-	dot.translatesAutoresizingMaskIntoConstraints = NO;
-	dot.wantsLayer = YES;
-	dot.layer.cornerRadius = 4.0;
-	dot.layer.masksToBounds = YES;
-	dot.layer.backgroundColor = [NSColor systemRedColor].CGColor;
-	[content addSubview:dot];
-
-	gRecordingNotchIconView = [NSImageView new];
-	gRecordingNotchIconView.translatesAutoresizingMaskIntoConstraints = NO;
-	gRecordingNotchIconView.imageScaling = NSImageScaleProportionallyDown;
-	[content addSubview:gRecordingNotchIconView];
-
-	gRecordingNotchLabel = [NSTextField labelWithString:@"Enregistrement en cours"];
-	gRecordingNotchLabel.translatesAutoresizingMaskIntoConstraints = NO;
-	gRecordingNotchLabel.font = [NSFont systemFontOfSize:12 weight:NSFontWeightSemibold];
-	gRecordingNotchLabel.textColor = [NSColor whiteColor];
-	gRecordingNotchLabel.lineBreakMode = NSLineBreakByTruncatingTail;
-	[content addSubview:gRecordingNotchLabel];
-
-	[NSLayoutConstraint activateConstraints:@[
-		[dot.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:14],
-		[dot.centerYAnchor constraintEqualToAnchor:content.centerYAnchor],
-		[dot.widthAnchor constraintEqualToConstant:8],
-		[dot.heightAnchor constraintEqualToConstant:8],
-
-		[gRecordingNotchIconView.leadingAnchor constraintEqualToAnchor:dot.trailingAnchor constant:8],
-		[gRecordingNotchIconView.centerYAnchor constraintEqualToAnchor:content.centerYAnchor],
-		[gRecordingNotchIconView.widthAnchor constraintEqualToConstant:15],
-		[gRecordingNotchIconView.heightAnchor constraintEqualToConstant:15],
-
-		[gRecordingNotchLabel.leadingAnchor constraintEqualToAnchor:gRecordingNotchIconView.trailingAnchor constant:8],
-		[gRecordingNotchLabel.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-14],
-		[gRecordingNotchLabel.centerYAnchor constraintEqualToAnchor:content.centerYAnchor],
-	]];
-
-	updateRecordingNotchState();
-	positionRecordingNotchWindow();
-}
-
-static void showRecordingNotch(void) {
-	ensureRecordingNotch();
-	updateRecordingNotchState();
-	positionRecordingNotchWindow();
-	[gRecordingNotchWindow orderFrontRegardless];
-}
-
-static void hideRecordingNotch(void) {
-	if (!gRecordingNotchWindow) return;
-	[gRecordingNotchWindow orderOut:nil];
 }
 
 static void ensurePopover(void) {
@@ -906,7 +759,6 @@ static void stopRecording(void) {
 	gIsRecording = false;
 	updateStatusItemTitle();
 	updateMenuState();
-	hideRecordingNotch();
 
 	if (gEngine && gEngine.isRunning) {
 		[gEngine stop];
@@ -935,7 +787,6 @@ static void startRecording(void) {
 	gLatestTranscript = @"";
 	updateStatusItemTitle();
 	updateMenuState();
-	showRecordingNotch();
 
 	if (gTask) {
 		[gTask cancel];
@@ -960,8 +811,6 @@ static void startRecording(void) {
 		NSLog(@"Audio engine start error: %@", err);
 		gIsRecording = false;
 		updateStatusItemTitle();
-		updateMenuState();
-		hideRecordingNotch();
 		return;
 	}
 
