@@ -60,3 +60,10 @@ Hotkeys utiles (push-to-talk) :
 - `fn` (maintenir)
 - `rcmd` / `cmd` (maintenir)
 - `ropt` / `lopt` (maintenir)
+
+## Changelog
+
+- `2026-02-26` : Ajout d'une option de réglages pour choisir l'icône menubar (`Wave` ou `Micro`) avec persistance (`NSUserDefaults`).
+- `2026-02-26` : Renommage du projet `PKTranscript` -> `PKvoice` (bundle, binaire, assets, README).
+- `2026-02-26` : Restructuration du dossier (`README.md` + `src/` + `release/`) et adaptation du script de build.
+- `2026-02-26` : Initialisation du scaffold `PKvoice` à partir de `Macos_PKtranscript`.

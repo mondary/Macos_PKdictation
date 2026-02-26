@@ -37,7 +37,12 @@ typedef NS_ENUM(NSInteger, PKTGlassTheme) {
 	PKTGlassThemeLight = 0,
 	PKTGlassThemeDark = 1,
 };
+typedef NS_ENUM(NSInteger, PKTStatusIconStyle) {
+	PKTStatusIconStyleWave = 0,
+	PKTStatusIconStyleMicro = 1,
+};
 static NSInteger gGlassTheme = PKTGlassThemeDark;
+static NSInteger gStatusIconStyle = PKTStatusIconStyleMicro;
 static NSImage *gStatusBaseIcon = nil;
 static NSPopover *gPopover = nil;
 static NSVisualEffectView *gPopoverBackground = nil;
@@ -60,6 +65,7 @@ static NSButton *gSettingsAutoPasteCheckbox = nil;
 static NSSlider *gSettingsMenuWidthSlider = nil;
 static NSTextField *gSettingsMenuWidthValueLabel = nil;
 static NSSegmentedControl *gSettingsThemeSegment = nil;
+static NSSegmentedControl *gSettingsStatusIconSegment = nil;
 
 static void startRecording(void);
 static void stopRecording(void);
@@ -137,6 +143,16 @@ static void applySettingsTheme(void);
 	applyGlassTheme();
 	updateMenuState();
 }
+- (void)settingsStatusIconChanged:(id)sender {
+	NSSegmentedControl *seg = (NSSegmentedControl *)sender;
+	if (![seg isKindOfClass:[NSSegmentedControl class]]) return;
+	NSInteger v = seg.selectedSegment;
+	if (v != PKTStatusIconStyleWave && v != PKTStatusIconStyleMicro) return;
+	gStatusIconStyle = v;
+	[[NSUserDefaults standardUserDefaults] setInteger:gStatusIconStyle forKey:@"statusIconStyle"];
+	updateStatusItemIcon();
+	updateMenuState();
+}
 @end
 
 static void setHotKeyCode(uint16_t v) {
@@ -148,6 +164,16 @@ static void updateStatusItemTitle(void) {
 }
 
 static NSImage *makeStatusIcon(BOOL recording) {
+	if (gStatusIconStyle == PKTStatusIconStyleWave) {
+		if (@available(macOS 11.0, *)) {
+			NSImage *wave = [NSImage imageWithSystemSymbolName:@"waveform" accessibilityDescription:@"PKvoice"];
+			if (wave) {
+				wave.template = YES;
+				return wave;
+			}
+		}
+		// Fallback to bundled icon if SF Symbols isn't available.
+	}
 	if (!gStatusBaseIcon) return nil;
 	const CGFloat s = 18.0;
 
@@ -168,15 +194,23 @@ static NSImage *makeStatusIcon(BOOL recording) {
 
 static void updateStatusItemIcon(void) {
 	if (!gStatusItem || !gStatusItem.button) return;
-	NSBundle *bundle = [NSBundle mainBundle];
-	NSString *iconPath = [bundle pathForResource:@"PKvoice" ofType:@"icns"];
-	if (!iconPath) return;
-	if (!gStatusBaseIcon) {
-		gStatusBaseIcon = [[NSImage alloc] initWithContentsOfFile:iconPath];
+	if (gStatusIconStyle == PKTStatusIconStyleMicro && !gStatusBaseIcon) {
+		NSBundle *bundle = [NSBundle mainBundle];
+		NSString *iconPath = [bundle pathForResource:@"PKvoice" ofType:@"icns"];
+		if (iconPath) {
+			gStatusBaseIcon = [[NSImage alloc] initWithContentsOfFile:iconPath];
+		}
 	}
-	if (!gStatusBaseIcon) return;
 
-	gStatusItem.button.image = makeStatusIcon(gIsRecording);
+	NSImage *img = makeStatusIcon(gIsRecording);
+	if (!img) return;
+
+	gStatusItem.button.image = img;
+	if (gStatusIconStyle == PKTStatusIconStyleWave) {
+		gStatusItem.button.contentTintColor = gIsRecording ? [NSColor systemRedColor] : nil;
+	} else {
+		gStatusItem.button.contentTintColor = nil;
+	}
 	gStatusItem.button.title = @"";
 	gStatusItem.button.attributedTitle = [[NSAttributedString alloc] initWithString:@""];
 	gStatusItem.button.imagePosition = NSImageOnly;
@@ -334,6 +368,7 @@ static void updateMenuState(void) {
 	if (gSettingsMenuWidthSlider) gSettingsMenuWidthSlider.doubleValue = gMaxMenuTextWidth;
 	if (gSettingsMenuWidthValueLabel) gSettingsMenuWidthValueLabel.stringValue = [NSString stringWithFormat:@"%.0f px", gMaxMenuTextWidth];
 	if (gSettingsThemeSegment) gSettingsThemeSegment.selectedSegment = gGlassTheme;
+	if (gSettingsStatusIconSegment) gSettingsStatusIconSegment.selectedSegment = gStatusIconStyle;
 	if (gPopoverHotkeyLabel) gPopoverHotkeyLabel.stringValue = hotkeyTitle() ?: @"";
 
 	for (int i = 0; i < 10; i++) {
@@ -564,7 +599,7 @@ static void showSettingsWindow(void) {
 		return;
 	}
 
-	NSRect frame = NSMakeRect(0, 0, 460, 280);
+	NSRect frame = NSMakeRect(0, 0, 460, 330);
 	NSWindowStyleMask style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable;
 	gSettingsWindow = [[NSWindow alloc] initWithContentRect:frame styleMask:style backing:NSBackingStoreBuffered defer:NO];
 	gSettingsWindow.title = @"PKvoice — Settings";
@@ -638,6 +673,15 @@ static void showSettingsWindow(void) {
 	gSettingsThemeSegment.translatesAutoresizingMaskIntoConstraints = NO;
 	[content addSubview:gSettingsThemeSegment];
 
+	NSTextField *iconLabel = [NSTextField labelWithString:@"Icône menubar"];
+	iconLabel.translatesAutoresizingMaskIntoConstraints = NO;
+	[content addSubview:iconLabel];
+
+	gSettingsStatusIconSegment = [NSSegmentedControl segmentedControlWithLabels:@[ @"Wave", @"Micro" ] trackingMode:NSSegmentSwitchTrackingSelectOne target:gMenuHandler action:@selector(settingsStatusIconChanged:)];
+	gSettingsStatusIconSegment.selectedSegment = gStatusIconStyle;
+	gSettingsStatusIconSegment.translatesAutoresizingMaskIntoConstraints = NO;
+	[content addSubview:gSettingsStatusIconSegment];
+
 	NSTextField *placeholder = [NSTextField labelWithString:@"Autres réglages (raccourci, locale, etc.) : à venir"];
 	placeholder.textColor = [NSColor tertiaryLabelColor];
 	placeholder.font = [NSFont systemFontOfSize:12];
@@ -673,7 +717,13 @@ static void showSettingsWindow(void) {
 		[gSettingsThemeSegment.centerYAnchor constraintEqualToAnchor:themeLabel.centerYAnchor],
 		[gSettingsThemeSegment.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
 
-		[placeholder.topAnchor constraintEqualToAnchor:themeLabel.bottomAnchor constant:18],
+		[iconLabel.topAnchor constraintEqualToAnchor:themeLabel.bottomAnchor constant:16],
+		[iconLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
+
+		[gSettingsStatusIconSegment.centerYAnchor constraintEqualToAnchor:iconLabel.centerYAnchor],
+		[gSettingsStatusIconSegment.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
+
+		[placeholder.topAnchor constraintEqualToAnchor:iconLabel.bottomAnchor constant:18],
 		[placeholder.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
 		[placeholder.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
 	]];
@@ -852,6 +902,10 @@ static void runApp(const char *localeCString) {
 		}
 		if ([defaults objectForKey:@"autoPasteEnabled"] != nil) {
 			gAutoPasteEnabled = [defaults boolForKey:@"autoPasteEnabled"];
+		}
+		if ([defaults objectForKey:@"statusIconStyle"] != nil) {
+			NSInteger s = [defaults integerForKey:@"statusIconStyle"];
+			if (s == PKTStatusIconStyleWave || s == PKTStatusIconStyleMicro) gStatusIconStyle = s;
 		}
 
 		requestPermissions();
