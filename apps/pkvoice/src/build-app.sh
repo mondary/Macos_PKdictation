@@ -3,7 +3,7 @@ set -euo pipefail
 
 APP_NAME="PKvoice"
 BUNDLE_ID="com.example.pkvoice"
-APP_VERSION="${APP_VERSION:-0.1.1}"
+APP_VERSION="${APP_VERSION:-1.10}"
 APP_BUILD="${APP_BUILD:-1}"
 
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

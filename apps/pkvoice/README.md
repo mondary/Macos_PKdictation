@@ -35,7 +35,7 @@ open release/PKvoice.app
 Build avec version explicite :
 
 ```bash
-APP_VERSION=0.1.1 APP_BUILD=1 ./src/build-app.sh
+APP_VERSION=1.10 APP_BUILD=1 ./src/build-app.sh
 ```
 
 À la première exécution, macOS va demander les autorisations. Si ça ne colle pas, vérifiez :
@@ -70,6 +70,7 @@ Hotkeys utiles (push-to-talk) :
 
 ## Changelog
 
+- `2026-02-26` : Correction de la version par défaut du build à `1.10` (affichée dans l'app et injectée dans `Info.plist`).
 - `2026-02-26` : Ajout d'un overlay type **notch** (haut-centre) visible pendant l'enregistrement pour indiquer clairement l'écoute en cours.
 - `2026-02-26` : La fenêtre Settings affiche maintenant la version de l'app (`CFBundleShortVersionString` + build).
 - `2026-02-26` : Le build accepte `APP_VERSION` et `APP_BUILD` et les injecte dans `Info.plist`.
