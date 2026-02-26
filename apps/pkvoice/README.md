@@ -38,6 +38,20 @@ Build avec version explicite :
 APP_VERSION=1.10 APP_BUILD=1 ./src/build-app.sh
 ```
 
+## Test du notch (sandbox séparé)
+
+App de test dédiée pour travailler le notch sans casser `PKvoice` :
+
+```bash
+./src/build-notch-test.sh
+open release/PKvoiceNotchTest.app
+```
+
+Cette app ouvre une petite fenêtre de contrôle avec :
+- `Afficher` / `Masquer` / `Toggle`
+- choix d'icône `Wave` / `Micro`
+- `Recentrer` (si tu changes d'écran / espace)
+
 À la première exécution, macOS va demander les autorisations. Si ça ne colle pas, vérifiez :
 
 - Réglages Système → Confidentialité et sécurité → **Accessibilité**
@@ -69,6 +83,7 @@ Hotkeys utiles (push-to-talk) :
 
 ## Changelog
 
+- `2026-02-26` : Ajout de `PKvoiceNotchTest.app` (sandbox séparé) pour tester le notch indépendamment de `PKvoice`.
 - `2026-02-26` : Correction de la version par défaut du build à `1.10` (affichée dans l'app et injectée dans `Info.plist`).
 - `2026-02-26` : La fenêtre Settings affiche maintenant la version de l'app (`CFBundleShortVersionString` + build).
 - `2026-02-26` : Le build accepte `APP_VERSION` et `APP_BUILD` et les injecte dans `Info.plist`.
