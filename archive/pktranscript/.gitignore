@@ -1,4 +1,26 @@
+# macOS
 .DS_Store
+.AppleDouble
+.LSOverride
+
+# Build products
+dist/
+build/
+.build/
+DerivedData/
+*.app/
+*.framework/
+*.dSYM/
+*.ipa
+
+# Go
+go/dist
 
 # Local build caches (keep out of git)
 .cache/
+
+# Temporary files
+*.swp
+*.swo
+*~
+.*.sw[a-z]
