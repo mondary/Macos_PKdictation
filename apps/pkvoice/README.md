@@ -47,6 +47,7 @@ APP_VERSION=1.10 APP_BUILD=1 ./src/build-app.sh
 
 - Par défaut : maintenir **Fn** pour parler, relâcher pour coller la transcription.
 - Un indicateur visuel type **notch** apparaît en haut de l'écran pendant l'enregistrement.
+- Note : avec les touches modificateur (ex. `Fn`), il faut maintenir ~`250 ms` avant le démarrage (anti faux déclenchements), donc le notch n'apparaît qu'après ce délai.
 - Menu barre “PKT” :
   - **Transcript (auto-paste)** : toggle (si OFF, ça copie seulement dans le clipboard, sans coller)
   - **Settings…** : ouvre la fenêtre de réglages
@@ -70,6 +71,7 @@ Hotkeys utiles (push-to-talk) :
 
 ## Changelog
 
+- `2026-02-26` : Notch d'enregistrement renforcé (plus visible, animation d'apparition/disparition, meilleure visibilité en espaces plein écran).
 - `2026-02-26` : Correction de la version par défaut du build à `1.10` (affichée dans l'app et injectée dans `Info.plist`).
 - `2026-02-26` : Ajout d'un overlay type **notch** (haut-centre) visible pendant l'enregistrement pour indiquer clairement l'écoute en cours.
 - `2026-02-26` : La fenêtre Settings affiche maintenant la version de l'app (`CFBundleShortVersionString` + build).

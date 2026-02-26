@@ -516,7 +516,7 @@ static void updateRecordingNotchState(void) {
 static void ensureRecordingNotch(void) {
 	if (gRecordingNotchWindow) return;
 
-	NSRect frame = NSMakeRect(0, 0, 260, 42);
+	NSRect frame = NSMakeRect(0, 0, 292, 46);
 	gRecordingNotchWindow = [[NSPanel alloc] initWithContentRect:frame
 		styleMask:NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel
 		backing:NSBackingStoreBuffered
@@ -525,17 +525,18 @@ static void ensureRecordingNotch(void) {
 	gRecordingNotchWindow.opaque = NO;
 	gRecordingNotchWindow.backgroundColor = [NSColor clearColor];
 	gRecordingNotchWindow.hasShadow = YES;
-	gRecordingNotchWindow.level = NSStatusWindowLevel + 1;
+	gRecordingNotchWindow.level = NSMainMenuWindowLevel + 2;
 	gRecordingNotchWindow.hidesOnDeactivate = NO;
 	gRecordingNotchWindow.movable = NO;
 	gRecordingNotchWindow.ignoresMouseEvents = YES;
-	gRecordingNotchWindow.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorTransient;
+	gRecordingNotchWindow.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorTransient | NSWindowCollectionBehaviorMoveToActiveSpace | NSWindowCollectionBehaviorFullScreenAuxiliary;
+	gRecordingNotchWindow.alphaValue = 0.0;
 
 	gRecordingNotchBackground = [NSVisualEffectView new];
 	gRecordingNotchBackground.frame = ((NSView *)gRecordingNotchWindow.contentView).bounds;
 	gRecordingNotchBackground.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
 	gRecordingNotchBackground.wantsLayer = YES;
-	gRecordingNotchBackground.layer.cornerRadius = 14.0;
+	gRecordingNotchBackground.layer.cornerRadius = 16.0;
 	gRecordingNotchBackground.layer.masksToBounds = YES;
 	[gRecordingNotchWindow setContentView:gRecordingNotchBackground];
 
@@ -564,13 +565,13 @@ static void ensureRecordingNotch(void) {
 	[NSLayoutConstraint activateConstraints:@[
 		[dot.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:14],
 		[dot.centerYAnchor constraintEqualToAnchor:content.centerYAnchor],
-		[dot.widthAnchor constraintEqualToConstant:8],
-		[dot.heightAnchor constraintEqualToConstant:8],
+		[dot.widthAnchor constraintEqualToConstant:9],
+		[dot.heightAnchor constraintEqualToConstant:9],
 
 		[gRecordingNotchIconView.leadingAnchor constraintEqualToAnchor:dot.trailingAnchor constant:8],
 		[gRecordingNotchIconView.centerYAnchor constraintEqualToAnchor:content.centerYAnchor],
-		[gRecordingNotchIconView.widthAnchor constraintEqualToConstant:15],
-		[gRecordingNotchIconView.heightAnchor constraintEqualToConstant:15],
+		[gRecordingNotchIconView.widthAnchor constraintEqualToConstant:16],
+		[gRecordingNotchIconView.heightAnchor constraintEqualToConstant:16],
 
 		[gRecordingNotchLabel.leadingAnchor constraintEqualToAnchor:gRecordingNotchIconView.trailingAnchor constant:8],
 		[gRecordingNotchLabel.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-14],
@@ -585,12 +586,22 @@ static void showRecordingNotch(void) {
 	ensureRecordingNotch();
 	updateRecordingNotchState();
 	positionRecordingNotchWindow();
+	[gRecordingNotchWindow setAlphaValue:0.0];
 	[gRecordingNotchWindow orderFrontRegardless];
+	[NSAnimationContext runAnimationGroup:^(NSAnimationContext * _Nonnull context) {
+		context.duration = 0.12;
+		[[gRecordingNotchWindow animator] setAlphaValue:1.0];
+	} completionHandler:nil];
 }
 
 static void hideRecordingNotch(void) {
 	if (!gRecordingNotchWindow) return;
-	[gRecordingNotchWindow orderOut:nil];
+	[NSAnimationContext runAnimationGroup:^(NSAnimationContext * _Nonnull context) {
+		context.duration = 0.10;
+		[[gRecordingNotchWindow animator] setAlphaValue:0.0];
+	} completionHandler:^{
+		[gRecordingNotchWindow orderOut:nil];
+	}];
 }
 
 static void ensurePopover(void) {
