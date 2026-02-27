@@ -836,7 +836,7 @@ static void refreshSpinnerVisuals(void) {
 
 static void updateNotchLabel(void) {
 	if (!gNotchLabel) return;
-	NSString *fallback = [NSString stringWithFormat:@"%@ · %@", uiText(@"Enregistrement", @"Recording"), spinnerPatternTitle()];
+	NSString *fallback = gIsRecording ? uiText(@"Enregistrement…", @"Recording…") : @"";
 	NSString *live = [gLatestTranscript stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
 	if (gIsRecording && live && live.length > 0) {
 		gNotchLabel.stringValue = live;
@@ -908,7 +908,7 @@ static void ensureNotchWindow(void) {
 		[gNotchSpinner addSubview:d];
 	}
 
-	gNotchLabel = [NSTextField labelWithString:uiText(@"Enregistrement", @"Recording")];
+	gNotchLabel = [NSTextField labelWithString:uiText(@"Enregistrement…", @"Recording…")];
 	gNotchLabel.translatesAutoresizingMaskIntoConstraints = NO;
 	gNotchLabel.font = [NSFont systemFontOfSize:11 weight:NSFontWeightSemibold];
 	gNotchLabel.textColor = [NSColor whiteColor];
