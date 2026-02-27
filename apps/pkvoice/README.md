@@ -35,7 +35,7 @@ open release/PKvoice.app
 Build avec version explicite :
 
 ```bash
-APP_VERSION=1.13 ./src/build-app.sh
+APP_VERSION=1.14 ./src/build-app.sh
 ```
 
 ## Test du notch (sandbox séparé)
@@ -90,6 +90,8 @@ Hotkeys utiles (push-to-talk) :
 
 ## Changelog
 
+- `2026-02-27` : Version par défaut incrémentée à `1.14` (app principale + notch test).
+- `2026-02-27` : Notch : affichage de la transcription partielle en live pendant l'enregistrement (avec fallback sur le libellé d'état).
 - `2026-02-27` : Version par défaut incrémentée à `1.13` (app principale + notch test).
 - `2026-02-27` : Settings : suppression du bloc d'information placé entre le titre `Paramètres` et la section `Transcription`.
 - `2026-02-27` : Version par défaut incrémentée à `1.12` (app principale + notch test).

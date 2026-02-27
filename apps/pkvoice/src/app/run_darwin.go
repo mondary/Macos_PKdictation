@@ -143,6 +143,7 @@ static NSString *effectiveRecognizerLocale(void);
 static void rebuildRecognizer(void);
 static NSString *uiText(NSString *fr, NSString *en);
 static void teardownSettingsWindow(void);
+static void updateNotchLabel(void);
 
 @interface MenuHandler : NSObject
 @end
@@ -821,9 +822,7 @@ static void ensureSpinnerTimer(void) {
 }
 
 static void refreshSpinnerVisuals(void) {
-	if (gNotchLabel) {
-		gNotchLabel.stringValue = [NSString stringWithFormat:@"%@ · %@", uiText(@"Enregistrement", @"Recording"), spinnerPatternTitle()];
-	}
+	updateNotchLabel();
 	syncSpinnerSettingsUI();
 	gSpinnerStartTime = CACurrentMediaTime();
 	updateSpinnerFrame();
@@ -833,6 +832,17 @@ static void refreshSpinnerVisuals(void) {
 		[gSpinnerTimer invalidate];
 		gSpinnerTimer = nil;
 	}
+}
+
+static void updateNotchLabel(void) {
+	if (!gNotchLabel) return;
+	NSString *fallback = [NSString stringWithFormat:@"%@ · %@", uiText(@"Enregistrement", @"Recording"), spinnerPatternTitle()];
+	NSString *live = [gLatestTranscript stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+	if (gIsRecording && live && live.length > 0) {
+		gNotchLabel.stringValue = live;
+		return;
+	}
+	gNotchLabel.stringValue = fallback;
 }
 
 static void positionNotchWindow(void) {
@@ -1617,11 +1627,11 @@ static void startRecording(void) {
 	}
 
 	gIsRecording = true;
-	showNotch();
 	gDidCommitTranscript = false;
 	gPasteWhenFinal = false;
 	gCopyWhenFinal = false;
 	gLatestTranscript = @"";
+	showNotch();
 	updateStatusItemTitle();
 	updateMenuState();
 
@@ -1656,6 +1666,7 @@ static void startRecording(void) {
 		if (result) {
 			gLatestTranscript = result.bestTranscription.formattedString ?: @"";
 			dispatch_async(dispatch_get_main_queue(), ^{
+				updateNotchLabel();
 				updateMenuState();
 			});
 		}
