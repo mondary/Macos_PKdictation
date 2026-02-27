@@ -90,6 +90,7 @@ Hotkeys utiles (push-to-talk) :
 
 ## Changelog
 
+- `2026-02-27` : Settings notch: remplacement du sélecteur d'animation textuel par des mini-animations directement cliquables (toggle visuel), sans dropdown.
 - `2026-02-27` : Simplification versioning : suppression du `build` séparé (`APP_BUILD`), `CFBundleVersion` aligné sur `APP_VERSION`, et affichage dans `Settings` limité au numéro de version.
 - `2026-02-27` : Réintégration du notch animé dans `PKvoice` sur appui hotkey (dont `Fn`) + section dédiée dans `Settings` avec choix d'animation (clic, sans liste déroulante), choix de couleur (pastilles cliquables) et prévisualisation live.
 - `2026-02-27` : Suppression de la ligne `Auto-paste` du popover principal (au-dessus de l'historique) ; l'option reste disponible uniquement dans `Settings`.

@@ -86,8 +86,10 @@ static NSSlider *gSettingsMenuWidthSlider = nil;
 static NSTextField *gSettingsMenuWidthValueLabel = nil;
 static NSSegmentedControl *gSettingsThemeSegment = nil;
 static NSSegmentedControl *gSettingsStatusIconSegment = nil;
-static NSSegmentedControl *gSettingsPatternTopSegment = nil;
-static NSSegmentedControl *gSettingsPatternBottomSegment = nil;
+static NSView *gSettingsPatternGrid = nil;
+static NSButton *gSettingsPatternButtons[7] = { nil };
+static NSView *gSettingsPatternButtonSpinners[7] = { nil };
+static NSView *gSettingsPatternButtonDots[7][9] = { nil };
 static NSButton *gSettingsColorButtons[6] = { nil };
 static NSView *gSettingsPreviewBackground = nil;
 static NSView *gSettingsPreviewSpinner = nil;
@@ -185,22 +187,12 @@ static void syncSpinnerSettingsUI(void);
 	updateStatusItemIcon();
 	updateMenuState();
 }
-- (void)settingsPatternTopChanged:(id)sender {
-	NSSegmentedControl *seg = (NSSegmentedControl *)sender;
-	if (![seg isKindOfClass:[NSSegmentedControl class]]) return;
-	NSInteger s = seg.selectedSegment;
-	if (s < 0 || s > 3) return;
+- (void)settingsPatternClicked:(id)sender {
+	NSButton *b = (NSButton *)sender;
+	if (![b isKindOfClass:[NSButton class]]) return;
+	NSInteger s = b.tag;
+	if (s < PKTSpinnerPatternWave || s > PKTSpinnerPatternSineWave) return;
 	gSpinnerPattern = s;
-	[[NSUserDefaults standardUserDefaults] setInteger:gSpinnerPattern forKey:@"spinnerPattern"];
-	syncSpinnerSettingsUI();
-	refreshSpinnerVisuals();
-}
-- (void)settingsPatternBottomChanged:(id)sender {
-	NSSegmentedControl *seg = (NSSegmentedControl *)sender;
-	if (![seg isKindOfClass:[NSSegmentedControl class]]) return;
-	NSInteger s = seg.selectedSegment;
-	if (s < 0 || s > 2) return;
-	gSpinnerPattern = 4 + s;
 	[[NSUserDefaults standardUserDefaults] setInteger:gSpinnerPattern forKey:@"spinnerPattern"];
 	syncSpinnerSettingsUI();
 	refreshSpinnerVisuals();
@@ -424,8 +416,8 @@ static bool isHotKeyDownForFlags(NSEventModifierFlags flags) {
 	}
 }
 
-static NSString *spinnerPatternTitle(void) {
-	switch (gSpinnerPattern) {
+static NSString *spinnerPatternTitleForPattern(NSInteger pattern) {
+	switch (pattern) {
 	case PKTSpinnerPatternWave: return @"Wave";
 	case PKTSpinnerPatternSpinner: return @"Spinner";
 	case PKTSpinnerPatternPulse: return @"Pulse";
@@ -435,6 +427,10 @@ static NSString *spinnerPatternTitle(void) {
 	case PKTSpinnerPatternSineWave: return @"Sine Wave";
 	default: return @"Spinner";
 	}
+}
+
+static NSString *spinnerPatternTitle(void) {
+	return spinnerPatternTitleForPattern(gSpinnerPattern);
 }
 
 static CGFloat clamp01(CGFloat v) {
@@ -505,8 +501,8 @@ static NSColor *spinnerGlowColor(void) {
 	                                 alpha:1.0];
 }
 
-static CFTimeInterval spinnerCycleDuration(void) {
-	switch (gSpinnerPattern) {
+static CFTimeInterval spinnerCycleDurationForPattern(NSInteger pattern) {
+	switch (pattern) {
 	case PKTSpinnerPatternWave: return 1.50;
 	case PKTSpinnerPatternSpinner: return 1.00;
 	case PKTSpinnerPatternPulse: return 1.75;
@@ -518,13 +514,13 @@ static CFTimeInterval spinnerCycleDuration(void) {
 	}
 }
 
-static CGFloat spinnerIntensityForDot(NSInteger i, double tNorm) {
+static CGFloat spinnerIntensityForPatternDot(NSInteger pattern, NSInteger i, double tNorm) {
 	CGFloat t = (CGFloat)tNorm;
 	NSInteger row = i / 3;
 	NSInteger col = i % 3;
 	BOOL isCenter = (i == 4);
 
-	switch (gSpinnerPattern) {
+	switch (pattern) {
 	case PKTSpinnerPatternSpinner: {
 		if (isCenter) return 1.0;
 		static const NSInteger ringDots[4] = {1, 5, 7, 3};
@@ -604,9 +600,9 @@ static void applyDotStyle(NSView *dot, CGFloat intensity) {
 	dot.layer.transform = active ? CATransform3DMakeScale(s, s, 1.0) : CATransform3DIdentity;
 }
 
-static void updateDots(NSView * __strong dots[9], double tNorm) {
+static void updateDots(NSView * __strong dots[9], NSInteger pattern, double tNorm) {
 	for (NSInteger i = 0; i < 9; i++) {
-		applyDotStyle(dots[i], spinnerIntensityForDot(i, tNorm));
+		applyDotStyle(dots[i], spinnerIntensityForPatternDot(pattern, i, tNorm));
 	}
 }
 
@@ -618,21 +614,24 @@ static BOOL shouldAnimateSpinner(void) {
 static void updateSpinnerFrame(void) {
 	if (gSpinnerStartTime <= 0) gSpinnerStartTime = CACurrentMediaTime();
 	CFTimeInterval now = CACurrentMediaTime();
-	CFTimeInterval dur = spinnerCycleDuration();
+	CFTimeInterval dur = spinnerCycleDurationForPattern(gSpinnerPattern);
 	double tNorm = (dur > 0) ? fmod((now - gSpinnerStartTime) / dur, 1.0) : 0.0;
-	updateDots(gNotchDots, tNorm);
-	updateDots(gSettingsPreviewDots, tNorm);
+	updateDots(gNotchDots, gSpinnerPattern, tNorm);
+	updateDots(gSettingsPreviewDots, gSpinnerPattern, tNorm);
+	for (NSInteger p = PKTSpinnerPatternWave; p <= PKTSpinnerPatternSineWave; p++) {
+		CFTimeInterval pdur = spinnerCycleDurationForPattern(p);
+		double pNorm = (pdur > 0) ? fmod((now - gSpinnerStartTime) / pdur, 1.0) : 0.0;
+		updateDots(gSettingsPatternButtonDots[p], p, pNorm);
+	}
 }
 
 static void syncSpinnerSettingsUI(void) {
-	if (gSettingsPatternTopSegment && gSettingsPatternBottomSegment) {
-		[gSettingsPatternTopSegment setSelectedSegment:-1];
-		[gSettingsPatternBottomSegment setSelectedSegment:-1];
-		if (gSpinnerPattern >= PKTSpinnerPatternWave && gSpinnerPattern <= PKTSpinnerPatternCross) {
-			gSettingsPatternTopSegment.selectedSegment = gSpinnerPattern;
-		} else {
-			gSettingsPatternBottomSegment.selectedSegment = gSpinnerPattern - 4;
-		}
+	for (NSInteger p = PKTSpinnerPatternWave; p <= PKTSpinnerPatternSineWave; p++) {
+		NSButton *b = gSettingsPatternButtons[p];
+		if (!b || !b.layer) continue;
+		BOOL selected = (p == gSpinnerPattern);
+		b.layer.borderColor = selected ? [NSColor whiteColor].CGColor : [NSColor colorWithCalibratedWhite:1.0 alpha:0.20].CGColor;
+		b.layer.borderWidth = selected ? 2.0 : 1.0;
 	}
 	for (NSInteger i = 0; i < 6; i++) {
 		NSButton *b = gSettingsColorButtons[i];
@@ -1117,19 +1116,51 @@ static void showSettingsWindow(void) {
 	patternLabel.translatesAutoresizingMaskIntoConstraints = NO;
 	[content addSubview:patternLabel];
 
-	gSettingsPatternTopSegment = [NSSegmentedControl segmentedControlWithLabels:@[ @"Wave", @"Spinner", @"Pulse", @"Cross" ]
-		trackingMode:NSSegmentSwitchTrackingSelectOne
-		target:gMenuHandler
-		action:@selector(settingsPatternTopChanged:)];
-	gSettingsPatternTopSegment.translatesAutoresizingMaskIntoConstraints = NO;
-	[content addSubview:gSettingsPatternTopSegment];
+	gSettingsPatternGrid = [NSView new];
+	gSettingsPatternGrid.translatesAutoresizingMaskIntoConstraints = NO;
+	[content addSubview:gSettingsPatternGrid];
 
-	gSettingsPatternBottomSegment = [NSSegmentedControl segmentedControlWithLabels:@[ @"Burst", @"Arrow", @"Sine" ]
-		trackingMode:NSSegmentSwitchTrackingSelectOne
-		target:gMenuHandler
-		action:@selector(settingsPatternBottomChanged:)];
-	gSettingsPatternBottomSegment.translatesAutoresizingMaskIntoConstraints = NO;
-	[content addSubview:gSettingsPatternBottomSegment];
+	const CGFloat patternButtonW = 68.0;
+	const CGFloat patternButtonH = 34.0;
+	const CGFloat patternGapX = 10.0;
+	const CGFloat patternGapY = 10.0;
+	const CGFloat spinnerSize = 14.0;
+	const CGFloat patternDotSize = 4.0;
+	const CGFloat patternDotGap = 1.0;
+	for (NSInteger p = PKTSpinnerPatternWave; p <= PKTSpinnerPatternSineWave; p++) {
+		NSInteger col = (p <= PKTSpinnerPatternCross) ? p : (p - 4);
+		NSInteger row = (p <= PKTSpinnerPatternCross) ? 0 : 1;
+		NSButton *b = [NSButton buttonWithTitle:@"" target:gMenuHandler action:@selector(settingsPatternClicked:)];
+		b.tag = p;
+		b.bordered = NO;
+		b.frame = NSMakeRect(col * (patternButtonW + patternGapX), row * (patternButtonH + patternGapY), patternButtonW, patternButtonH);
+		b.wantsLayer = YES;
+		b.layer.cornerRadius = 8.0;
+		b.layer.masksToBounds = YES;
+		b.layer.backgroundColor = [NSColor colorWithCalibratedWhite:0.10 alpha:0.95].CGColor;
+		b.layer.borderColor = [NSColor colorWithCalibratedWhite:1.0 alpha:0.20].CGColor;
+		b.layer.borderWidth = 1.0;
+		b.toolTip = spinnerPatternTitleForPattern(p);
+		gSettingsPatternButtons[p] = b;
+		[gSettingsPatternGrid addSubview:b];
+
+		NSView *spinner = [[NSView alloc] initWithFrame:NSMakeRect(round((patternButtonW - spinnerSize) * 0.5), round((patternButtonH - spinnerSize) * 0.5), spinnerSize, spinnerSize)];
+		spinner.wantsLayer = YES;
+		gSettingsPatternButtonSpinners[p] = spinner;
+		[b addSubview:spinner];
+
+		for (NSInteger i = 0; i < 9; i++) {
+			NSInteger dotRow = i / 3;
+			NSInteger dotCol = i % 3;
+			NSView *d = [[NSView alloc] initWithFrame:NSMakeRect(dotCol * (patternDotSize + patternDotGap), (2 - dotRow) * (patternDotSize + patternDotGap), patternDotSize, patternDotSize)];
+			d.wantsLayer = YES;
+			d.layer.cornerRadius = 1.0;
+			d.layer.masksToBounds = NO;
+			d.layer.backgroundColor = spinnerBaseColor().CGColor;
+			gSettingsPatternButtonDots[p][i] = d;
+			[spinner addSubview:d];
+		}
+	}
 
 	NSTextField *colorLabel = [NSTextField labelWithString:@"Couleur"];
 	colorLabel.translatesAutoresizingMaskIntoConstraints = NO;
@@ -1236,15 +1267,12 @@ static void showSettingsWindow(void) {
 		[patternLabel.topAnchor constraintEqualToAnchor:notchLabel.bottomAnchor constant:12],
 		[patternLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
 
-		[gSettingsPatternTopSegment.centerYAnchor constraintEqualToAnchor:patternLabel.centerYAnchor],
-		[gSettingsPatternTopSegment.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
-		[gSettingsPatternTopSegment.widthAnchor constraintEqualToConstant:320],
+		[gSettingsPatternGrid.topAnchor constraintEqualToAnchor:patternLabel.bottomAnchor constant:8],
+		[gSettingsPatternGrid.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
+		[gSettingsPatternGrid.widthAnchor constraintEqualToConstant:(patternButtonW * 4.0 + patternGapX * 3.0)],
+		[gSettingsPatternGrid.heightAnchor constraintEqualToConstant:(patternButtonH * 2.0 + patternGapY)],
 
-		[gSettingsPatternBottomSegment.topAnchor constraintEqualToAnchor:gSettingsPatternTopSegment.bottomAnchor constant:8],
-		[gSettingsPatternBottomSegment.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
-		[gSettingsPatternBottomSegment.widthAnchor constraintEqualToConstant:240],
-
-		[colorLabel.topAnchor constraintEqualToAnchor:gSettingsPatternBottomSegment.bottomAnchor constant:14],
+		[colorLabel.topAnchor constraintEqualToAnchor:gSettingsPatternGrid.bottomAnchor constant:14],
 		[colorLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
 
 		[swatchRow.centerYAnchor constraintEqualToAnchor:colorLabel.centerYAnchor],
