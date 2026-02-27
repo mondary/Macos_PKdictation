@@ -4,7 +4,6 @@ set -euo pipefail
 APP_NAME="PKvoiceNotchTest"
 BUNDLE_ID="com.example.pkvoice.notchtest"
 APP_VERSION="${APP_VERSION:-1.10}"
-APP_BUILD="${APP_BUILD:-1}"
 
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SRC_DIR/.." && pwd)"
@@ -22,7 +21,7 @@ export GOCACHE="${GOCACHE:-$GO_CACHE_DIR/build}"
 export GOMODCACHE="${GOMODCACHE:-$GO_CACHE_DIR/mod}"
 mkdir -p "$GOCACHE" "$GOMODCACHE"
 
-echo "Building notch test app... (${APP_VERSION} / build ${APP_BUILD})"
+echo "Building notch test app... (${APP_VERSION})"
 ARCH="${GOARCH:-}"
 if [[ -z "$ARCH" ]]; then
   case "$(uname -m)" in
@@ -51,7 +50,7 @@ cat > "$APP_DIR/Contents/Info.plist" <<EOF
   <key>CFBundleName</key><string>${APP_NAME}</string>
   <key>CFBundleDisplayName</key><string>${APP_NAME}</string>
   <key>CFBundleIdentifier</key><string>${BUNDLE_ID}</string>
-  <key>CFBundleVersion</key><string>${APP_BUILD}</string>
+  <key>CFBundleVersion</key><string>${APP_VERSION}</string>
   <key>CFBundleShortVersionString</key><string>${APP_VERSION}</string>
   <key>CFBundleExecutable</key><string>pkvoice_notchtest</string>
   <key>CFBundleIconFile</key><string>PKvoice</string>
@@ -65,5 +64,4 @@ echo -n "APPL????" > "$APP_DIR/Contents/PkgInfo"
 codesign --force --deep --sign - "$APP_DIR" >/dev/null 2>&1 || true
 
 echo "Built: $APP_DIR"
-echo "Version: ${APP_VERSION} (build ${APP_BUILD})"
-
+echo "Version: ${APP_VERSION}"

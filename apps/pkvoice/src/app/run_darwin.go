@@ -1037,8 +1037,7 @@ static void showSettingsWindow(void) {
 	NSString *hotkey = hotkeyTitle() ?: @"";
 	NSString *locale = (gLocaleIdentifier && gLocaleIdentifier.length > 0) ? gLocaleIdentifier : @"system";
 	NSString *appVersion = [[[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"] description] ?: @"?";
-	NSString *appBuild = [[[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleVersion"] description] ?: @"?";
-	NSTextField *subtitle = [NSTextField labelWithString:[NSString stringWithFormat:@"%@\nLocale : %@\nVersion : %@ (build %@)", hotkey, locale, appVersion, appBuild]];
+	NSTextField *subtitle = [NSTextField labelWithString:[NSString stringWithFormat:@"%@\nLocale : %@\nVersion : %@", hotkey, locale, appVersion]];
 	subtitle.font = [NSFont systemFontOfSize:12];
 	subtitle.textColor = [NSColor secondaryLabelColor];
 	subtitle.lineBreakMode = NSLineBreakByWordWrapping;
