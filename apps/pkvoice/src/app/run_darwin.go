@@ -1107,7 +1107,7 @@ static void showSettingsWindow(void) {
 	gSettingsStatusIconSegment.translatesAutoresizingMaskIntoConstraints = NO;
 	[content addSubview:gSettingsStatusIconSegment];
 
-	NSTextField *notchLabel = [NSTextField labelWithString:@"Notch FN (animation)"];
+	NSTextField *notchLabel = [NSTextField labelWithString:@"Notch Animation"];
 	notchLabel.font = [NSFont boldSystemFontOfSize:13];
 	notchLabel.translatesAutoresizingMaskIntoConstraints = NO;
 	[content addSubview:notchLabel];
