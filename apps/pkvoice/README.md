@@ -90,6 +90,7 @@ Hotkeys utiles (push-to-talk) :
 
 ## Changelog
 
+- `2026-02-27` : Réintégration du notch animé dans `PKvoice` sur appui hotkey (dont `Fn`) + section dédiée dans `Settings` avec choix d'animation (clic, sans liste déroulante), choix de couleur (pastilles cliquables) et prévisualisation live.
 - `2026-02-27` : Suppression de la ligne `Auto-paste` du popover principal (au-dessus de l'historique) ; l'option reste disponible uniquement dans `Settings`.
 - `2026-02-26` : `PKvoiceNotchTest` ajoute un **sélecteur de couleur** (macOS `NSColorWell`) pour choisir librement la couleur d'accent du spinner, en plus des presets `Wave` / `Micro`.
 - `2026-02-26` : `PKvoiceNotchTest` permet maintenant de choisir le **pattern** du spinner dot-matrix (`Wave`, `Spinner`, `Pulse`, `Cross`, `Burst`, `ArrowMove`, `Sine Wave`) en plus du thème couleur (`Wave` / `Micro`).
