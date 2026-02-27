@@ -90,6 +90,7 @@ Hotkeys utiles (push-to-talk) :
 
 ## Changelog
 
+- `2026-02-27` : Settings restructurés en sections (`Transcription`, `Model & Traduction`, `Menu`, `Notch Animation`), ajout d'un bouton de capture du raccourci clavier (clic puis touche, `Fn` par défaut), et déplacement de la version en pied de fenêtre.
 - `2026-02-27` : Libellé settings ajusté : `Notch FN (animation)` devient `Notch Animation`.
 - `2026-02-27` : Settings notch: remplacement du sélecteur d'animation textuel par des mini-animations directement cliquables (toggle visuel), sans dropdown.
 - `2026-02-27` : Simplification versioning : suppression du `build` séparé (`APP_BUILD`), `CFBundleVersion` aligné sur `APP_VERSION`, et affichage dans `Settings` limité au numéro de version.

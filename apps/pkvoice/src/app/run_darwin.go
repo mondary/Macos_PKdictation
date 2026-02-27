@@ -82,6 +82,7 @@ static NSWindow *gSettingsWindow = nil;
 static NSVisualEffectView *gSettingsBackground = nil;
 static NSView *gSettingsContent = nil;
 static NSButton *gSettingsAutoPasteCheckbox = nil;
+static NSButton *gSettingsHotkeyButton = nil;
 static NSSlider *gSettingsMenuWidthSlider = nil;
 static NSTextField *gSettingsMenuWidthValueLabel = nil;
 static NSSegmentedControl *gSettingsThemeSegment = nil;
@@ -102,6 +103,8 @@ static NSTextField *gNotchLabel = nil;
 static BOOL gNotchShown = NO;
 static NSTimer *gSpinnerTimer = nil;
 static CFTimeInterval gSpinnerStartTime = 0;
+static BOOL gIsCapturingHotkey = NO;
+static id gHotkeyCaptureLocalMonitor = nil;
 
 static void startRecording(void);
 static void stopRecording(void);
@@ -124,6 +127,9 @@ static void showNotch(void);
 static void hideNotch(void);
 static void refreshSpinnerVisuals(void);
 static void syncSpinnerSettingsUI(void);
+static NSString *hotkeyNameForKeycode(CGKeyCode keycode);
+static void updateSettingsHotkeyButtonTitle(void);
+static void stopHotkeyCapture(void);
 
 @interface MenuHandler : NSObject
 @end
@@ -158,6 +164,37 @@ static void syncSpinnerSettingsUI(void);
 	gAutoPasteEnabled = (b.state == NSControlStateValueOn);
 	[[NSUserDefaults standardUserDefaults] setBool:gAutoPasteEnabled forKey:@"autoPasteEnabled"];
 	updateMenuState();
+}
+- (void)settingsChangeHotkey:(id)sender {
+	(void)sender;
+	if (gIsCapturingHotkey) {
+		stopHotkeyCapture();
+		updateSettingsHotkeyButtonTitle();
+		return;
+	}
+	gIsCapturingHotkey = YES;
+	updateSettingsHotkeyButtonTitle();
+	[gSettingsWindow makeFirstResponder:nil];
+
+	gHotkeyCaptureLocalMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:(NSEventMaskKeyDown | NSEventMaskFlagsChanged) handler:^NSEvent * _Nullable(NSEvent * _Nonnull e) {
+		if (!gIsCapturingHotkey) return e;
+		if (e.type != NSEventTypeKeyDown && e.type != NSEventTypeFlagsChanged) return e;
+		CGKeyCode keycode = (CGKeyCode)e.keyCode;
+		if (keycode == (CGKeyCode)kVK_Escape) {
+			stopHotkeyCapture();
+			updateSettingsHotkeyButtonTitle();
+			return nil;
+		}
+		gHotKeyCode = (uint16_t)keycode;
+		[[NSUserDefaults standardUserDefaults] setInteger:(NSInteger)gHotKeyCode forKey:@"hotKeyCode"];
+		gModifierIsDown = NO;
+		++gPendingStartSeq;
+		if (gIsRecording) stopRecording();
+		stopHotkeyCapture();
+		updateMenuState();
+		updateSettingsHotkeyButtonTitle();
+		return nil;
+	}];
 }
 - (void)settingsMenuWidthChanged:(id)sender {
 	NSSlider *s = (NSSlider *)sender;
@@ -413,6 +450,92 @@ static bool isHotKeyDownForFlags(NSEventModifierFlags flags) {
 		return (flags & NSEventModifierFlagCommand) != 0;
 	default:
 		return false;
+	}
+}
+
+static NSString *hotkeyNameForKeycode(CGKeyCode keycode) {
+	switch (keycode) {
+	case (CGKeyCode)kVK_Function: return @"Fn";
+	case (CGKeyCode)kVK_RightCommand:
+	case (CGKeyCode)kVK_Command: return @"Cmd";
+	case (CGKeyCode)kVK_RightOption:
+	case (CGKeyCode)kVK_Option: return @"Option";
+	case (CGKeyCode)kVK_RightShift:
+	case (CGKeyCode)kVK_Shift: return @"Shift";
+	case (CGKeyCode)kVK_RightControl:
+	case (CGKeyCode)kVK_Control: return @"Ctrl";
+	case (CGKeyCode)kVK_F1: return @"F1";
+	case (CGKeyCode)kVK_F2: return @"F2";
+	case (CGKeyCode)kVK_F3: return @"F3";
+	case (CGKeyCode)kVK_F4: return @"F4";
+	case (CGKeyCode)kVK_F5: return @"F5";
+	case (CGKeyCode)kVK_F6: return @"F6";
+	case (CGKeyCode)kVK_F7: return @"F7";
+	case (CGKeyCode)kVK_F8: return @"F8";
+	case (CGKeyCode)kVK_F9: return @"F9";
+	case (CGKeyCode)kVK_F10: return @"F10";
+	case (CGKeyCode)kVK_F11: return @"F11";
+	case (CGKeyCode)kVK_F12: return @"F12";
+	case (CGKeyCode)kVK_ANSI_A: return @"A";
+	case (CGKeyCode)kVK_ANSI_B: return @"B";
+	case (CGKeyCode)kVK_ANSI_C: return @"C";
+	case (CGKeyCode)kVK_ANSI_D: return @"D";
+	case (CGKeyCode)kVK_ANSI_E: return @"E";
+	case (CGKeyCode)kVK_ANSI_F: return @"F";
+	case (CGKeyCode)kVK_ANSI_G: return @"G";
+	case (CGKeyCode)kVK_ANSI_H: return @"H";
+	case (CGKeyCode)kVK_ANSI_I: return @"I";
+	case (CGKeyCode)kVK_ANSI_J: return @"J";
+	case (CGKeyCode)kVK_ANSI_K: return @"K";
+	case (CGKeyCode)kVK_ANSI_L: return @"L";
+	case (CGKeyCode)kVK_ANSI_M: return @"M";
+	case (CGKeyCode)kVK_ANSI_N: return @"N";
+	case (CGKeyCode)kVK_ANSI_O: return @"O";
+	case (CGKeyCode)kVK_ANSI_P: return @"P";
+	case (CGKeyCode)kVK_ANSI_Q: return @"Q";
+	case (CGKeyCode)kVK_ANSI_R: return @"R";
+	case (CGKeyCode)kVK_ANSI_S: return @"S";
+	case (CGKeyCode)kVK_ANSI_T: return @"T";
+	case (CGKeyCode)kVK_ANSI_U: return @"U";
+	case (CGKeyCode)kVK_ANSI_V: return @"V";
+	case (CGKeyCode)kVK_ANSI_W: return @"W";
+	case (CGKeyCode)kVK_ANSI_X: return @"X";
+	case (CGKeyCode)kVK_ANSI_Y: return @"Y";
+	case (CGKeyCode)kVK_ANSI_Z: return @"Z";
+	case (CGKeyCode)kVK_ANSI_0: return @"0";
+	case (CGKeyCode)kVK_ANSI_1: return @"1";
+	case (CGKeyCode)kVK_ANSI_2: return @"2";
+	case (CGKeyCode)kVK_ANSI_3: return @"3";
+	case (CGKeyCode)kVK_ANSI_4: return @"4";
+	case (CGKeyCode)kVK_ANSI_5: return @"5";
+	case (CGKeyCode)kVK_ANSI_6: return @"6";
+	case (CGKeyCode)kVK_ANSI_7: return @"7";
+	case (CGKeyCode)kVK_ANSI_8: return @"8";
+	case (CGKeyCode)kVK_ANSI_9: return @"9";
+	case (CGKeyCode)kVK_Space: return @"Space";
+	case (CGKeyCode)kVK_Return: return @"Return";
+	case (CGKeyCode)kVK_Tab: return @"Tab";
+	case (CGKeyCode)kVK_Delete: return @"Backspace";
+	case (CGKeyCode)kVK_Escape: return @"Escape";
+	default:
+		return [NSString stringWithFormat:@"Key 0x%X", (unsigned)keycode];
+	}
+}
+
+static void updateSettingsHotkeyButtonTitle(void) {
+	if (!gSettingsHotkeyButton) return;
+	if (gIsCapturingHotkey) {
+		gSettingsHotkeyButton.title = @"Appuie sur une touche… (Esc annule)";
+		return;
+	}
+	gSettingsHotkeyButton.title = [NSString stringWithFormat:@"Maintenir %@", hotkeyNameForKeycode((CGKeyCode)gHotKeyCode)];
+}
+
+static void stopHotkeyCapture(void) {
+	gIsCapturingHotkey = NO;
+	if (gHotkeyCaptureLocalMonitor) {
+		[NSEvent removeMonitor:gHotkeyCaptureLocalMonitor];
+		gHotkeyCaptureLocalMonitor = nil;
 	}
 }
 
@@ -773,6 +896,7 @@ static void hideNotch(void) {
 
 static void updateMenuState(void) {
 	if (gSettingsAutoPasteCheckbox) gSettingsAutoPasteCheckbox.state = gAutoPasteEnabled ? NSControlStateValueOn : NSControlStateValueOff;
+	updateSettingsHotkeyButtonTitle();
 	if (gSettingsMenuWidthSlider) gSettingsMenuWidthSlider.doubleValue = gMaxMenuTextWidth;
 	if (gSettingsMenuWidthValueLabel) gSettingsMenuWidthValueLabel.stringValue = [NSString stringWithFormat:@"%.0f px", gMaxMenuTextWidth];
 	if (gSettingsThemeSegment) gSettingsThemeSegment.selectedSegment = gGlassTheme;
@@ -808,25 +932,7 @@ static void updateMenuState(void) {
 }
 
 static NSString *hotkeyTitle(void) {
-	switch ((CGKeyCode)gHotKeyCode) {
-	case (CGKeyCode)kVK_Function:
-		return @"Raccourci : Fn (maintenir)";
-	case (CGKeyCode)kVK_RightCommand:
-	case (CGKeyCode)kVK_Command:
-		return @"Raccourci : Cmd (maintenir)";
-	case (CGKeyCode)kVK_RightOption:
-	case (CGKeyCode)kVK_Option:
-		return @"Raccourci : Option (maintenir)";
-	case (CGKeyCode)kVK_RightShift:
-	case (CGKeyCode)kVK_Shift:
-		return @"Raccourci : Shift (maintenir)";
-	case (CGKeyCode)kVK_RightControl:
-	case (CGKeyCode)kVK_Control:
-		return @"Raccourci : Ctrl (maintenir)";
-	default:
-		break;
-	}
-	return [NSString stringWithFormat:@"Raccourci : keycode 0x%X", (unsigned)gHotKeyCode];
+	return [NSString stringWithFormat:@"Raccourci : %@ (maintenir)", hotkeyNameForKeycode((CGKeyCode)gHotKeyCode)];
 }
 
 static void applyGlassTheme(void) {
@@ -1005,7 +1111,7 @@ static void showSettingsWindow(void) {
 		return;
 	}
 
-	NSRect frame = NSMakeRect(0, 0, 520, 560);
+	NSRect frame = NSMakeRect(0, 0, 520, 690);
 	NSWindowStyleMask style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable;
 	gSettingsWindow = [[NSWindow alloc] initWithContentRect:frame styleMask:style backing:NSBackingStoreBuffered defer:NO];
 	gSettingsWindow.title = @"PKvoice — Settings";
@@ -1036,17 +1142,54 @@ static void showSettingsWindow(void) {
 	NSString *hotkey = hotkeyTitle() ?: @"";
 	NSString *locale = (gLocaleIdentifier && gLocaleIdentifier.length > 0) ? gLocaleIdentifier : @"system";
 	NSString *appVersion = [[[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"] description] ?: @"?";
-	NSTextField *subtitle = [NSTextField labelWithString:[NSString stringWithFormat:@"%@\nLocale : %@\nVersion : %@", hotkey, locale, appVersion]];
+	NSTextField *subtitle = [NSTextField labelWithString:[NSString stringWithFormat:@"%@\nLocale : %@", hotkey, locale]];
 	subtitle.font = [NSFont systemFontOfSize:12];
 	subtitle.textColor = [NSColor secondaryLabelColor];
 	subtitle.lineBreakMode = NSLineBreakByWordWrapping;
 	subtitle.translatesAutoresizingMaskIntoConstraints = NO;
 	[content addSubview:subtitle];
 
+	NSTextField *transcriptionSectionLabel = [NSTextField labelWithString:@"Transcription"];
+	transcriptionSectionLabel.font = [NSFont boldSystemFontOfSize:13];
+	transcriptionSectionLabel.translatesAutoresizingMaskIntoConstraints = NO;
+	[content addSubview:transcriptionSectionLabel];
+
 	gSettingsAutoPasteCheckbox = [NSButton checkboxWithTitle:@"Auto-paste (Cmd+V) après relâchement" target:gMenuHandler action:@selector(settingsToggleAutoPaste:)];
 	gSettingsAutoPasteCheckbox.state = gAutoPasteEnabled ? NSControlStateValueOn : NSControlStateValueOff;
 	gSettingsAutoPasteCheckbox.translatesAutoresizingMaskIntoConstraints = NO;
 	[content addSubview:gSettingsAutoPasteCheckbox];
+
+	NSTextField *hotkeyLabel = [NSTextField labelWithString:@"Raccourci"];
+	hotkeyLabel.translatesAutoresizingMaskIntoConstraints = NO;
+	[content addSubview:hotkeyLabel];
+
+	gSettingsHotkeyButton = [NSButton buttonWithTitle:@"" target:gMenuHandler action:@selector(settingsChangeHotkey:)];
+	gSettingsHotkeyButton.translatesAutoresizingMaskIntoConstraints = NO;
+	gSettingsHotkeyButton.bezelStyle = NSBezelStyleRounded;
+	[content addSubview:gSettingsHotkeyButton];
+	updateSettingsHotkeyButtonTitle();
+
+	NSTextField *modelSectionLabel = [NSTextField labelWithString:@"Model & Traduction"];
+	modelSectionLabel.font = [NSFont boldSystemFontOfSize:13];
+	modelSectionLabel.translatesAutoresizingMaskIntoConstraints = NO;
+	[content addSubview:modelSectionLabel];
+
+	NSTextField *modelValueLabel = [NSTextField labelWithString:@"Model actuel : Apple Speech (macOS)"];
+	modelValueLabel.font = [NSFont systemFontOfSize:12];
+	modelValueLabel.textColor = [NSColor secondaryLabelColor];
+	modelValueLabel.translatesAutoresizingMaskIntoConstraints = NO;
+	[content addSubview:modelValueLabel];
+
+	NSTextField *translationValueLabel = [NSTextField labelWithString:@"Traduction : désactivée (bientôt configurable)"];
+	translationValueLabel.font = [NSFont systemFontOfSize:12];
+	translationValueLabel.textColor = [NSColor secondaryLabelColor];
+	translationValueLabel.translatesAutoresizingMaskIntoConstraints = NO;
+	[content addSubview:translationValueLabel];
+
+	NSTextField *menuSectionLabel = [NSTextField labelWithString:@"Menu"];
+	menuSectionLabel.font = [NSFont boldSystemFontOfSize:13];
+	menuSectionLabel.translatesAutoresizingMaskIntoConstraints = NO;
+	[content addSubview:menuSectionLabel];
 
 	NSTextField *widthLabel = [NSTextField labelWithString:@"Largeur max (menu historique)"];
 	widthLabel.translatesAutoresizingMaskIntoConstraints = NO;
@@ -1207,6 +1350,12 @@ static void showSettingsWindow(void) {
 	previewHint.textColor = [NSColor colorWithCalibratedWhite:1.0 alpha:0.9];
 	[gSettingsPreviewBackground addSubview:previewHint];
 
+	NSTextField *versionFootnote = [NSTextField labelWithString:[NSString stringWithFormat:@"Version %@", appVersion]];
+	versionFootnote.translatesAutoresizingMaskIntoConstraints = NO;
+	versionFootnote.font = [NSFont systemFontOfSize:11];
+	versionFootnote.textColor = [NSColor tertiaryLabelColor];
+	[content addSubview:versionFootnote];
+
 	gSettingsPreviewSpinner = [NSView new];
 	gSettingsPreviewSpinner.translatesAutoresizingMaskIntoConstraints = NO;
 	gSettingsPreviewSpinner.wantsLayer = YES;
@@ -1235,21 +1384,35 @@ static void showSettingsWindow(void) {
 		[subtitle.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
 		[subtitle.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
 
-		[gSettingsAutoPasteCheckbox.topAnchor constraintEqualToAnchor:subtitle.bottomAnchor constant:16],
+		[transcriptionSectionLabel.topAnchor constraintEqualToAnchor:subtitle.bottomAnchor constant:16],
+		[transcriptionSectionLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
+
+		[hotkeyLabel.topAnchor constraintEqualToAnchor:transcriptionSectionLabel.bottomAnchor constant:10],
+		[hotkeyLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
+
+		[gSettingsHotkeyButton.centerYAnchor constraintEqualToAnchor:hotkeyLabel.centerYAnchor],
+		[gSettingsHotkeyButton.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
+		[gSettingsHotkeyButton.widthAnchor constraintGreaterThanOrEqualToConstant:220],
+
+		[gSettingsAutoPasteCheckbox.topAnchor constraintEqualToAnchor:hotkeyLabel.bottomAnchor constant:10],
 		[gSettingsAutoPasteCheckbox.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
 		[gSettingsAutoPasteCheckbox.trailingAnchor constraintLessThanOrEqualToAnchor:content.trailingAnchor constant:-18],
 
-		[widthLabel.topAnchor constraintEqualToAnchor:gSettingsAutoPasteCheckbox.bottomAnchor constant:18],
-		[widthLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
+		[modelSectionLabel.topAnchor constraintEqualToAnchor:gSettingsAutoPasteCheckbox.bottomAnchor constant:18],
+		[modelSectionLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
 
-		[gSettingsMenuWidthValueLabel.centerYAnchor constraintEqualToAnchor:widthLabel.centerYAnchor],
-		[gSettingsMenuWidthValueLabel.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
+		[modelValueLabel.topAnchor constraintEqualToAnchor:modelSectionLabel.bottomAnchor constant:8],
+		[modelValueLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
+		[modelValueLabel.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
 
-		[gSettingsMenuWidthSlider.topAnchor constraintEqualToAnchor:widthLabel.bottomAnchor constant:8],
-		[gSettingsMenuWidthSlider.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
-		[gSettingsMenuWidthSlider.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
+		[translationValueLabel.topAnchor constraintEqualToAnchor:modelValueLabel.bottomAnchor constant:4],
+		[translationValueLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
+		[translationValueLabel.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
 
-		[themeLabel.topAnchor constraintEqualToAnchor:gSettingsMenuWidthSlider.bottomAnchor constant:16],
+		[menuSectionLabel.topAnchor constraintEqualToAnchor:translationValueLabel.bottomAnchor constant:18],
+		[menuSectionLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
+
+		[themeLabel.topAnchor constraintEqualToAnchor:menuSectionLabel.bottomAnchor constant:10],
 		[themeLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
 
 		[gSettingsThemeSegment.centerYAnchor constraintEqualToAnchor:themeLabel.centerYAnchor],
@@ -1261,7 +1424,17 @@ static void showSettingsWindow(void) {
 		[gSettingsStatusIconSegment.centerYAnchor constraintEqualToAnchor:iconLabel.centerYAnchor],
 		[gSettingsStatusIconSegment.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
 
-		[notchLabel.topAnchor constraintEqualToAnchor:iconLabel.bottomAnchor constant:20],
+		[widthLabel.topAnchor constraintEqualToAnchor:iconLabel.bottomAnchor constant:16],
+		[widthLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
+
+		[gSettingsMenuWidthValueLabel.centerYAnchor constraintEqualToAnchor:widthLabel.centerYAnchor],
+		[gSettingsMenuWidthValueLabel.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
+
+		[gSettingsMenuWidthSlider.topAnchor constraintEqualToAnchor:widthLabel.bottomAnchor constant:8],
+		[gSettingsMenuWidthSlider.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
+		[gSettingsMenuWidthSlider.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
+
+		[notchLabel.topAnchor constraintEqualToAnchor:gSettingsMenuWidthSlider.bottomAnchor constant:22],
 		[notchLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
 
 		[patternLabel.topAnchor constraintEqualToAnchor:notchLabel.bottomAnchor constant:12],
@@ -1287,7 +1460,10 @@ static void showSettingsWindow(void) {
 		[gSettingsPreviewBackground.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
 		[gSettingsPreviewBackground.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
 		[gSettingsPreviewBackground.heightAnchor constraintEqualToConstant:74],
-		[gSettingsPreviewBackground.bottomAnchor constraintLessThanOrEqualToAnchor:content.bottomAnchor constant:-18],
+
+		[versionFootnote.topAnchor constraintEqualToAnchor:gSettingsPreviewBackground.bottomAnchor constant:8],
+		[versionFootnote.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
+		[versionFootnote.bottomAnchor constraintLessThanOrEqualToAnchor:content.bottomAnchor constant:-12],
 
 		[gSettingsPreviewSpinner.leadingAnchor constraintEqualToAnchor:gSettingsPreviewBackground.leadingAnchor constant:12],
 		[gSettingsPreviewSpinner.centerYAnchor constraintEqualToAnchor:gSettingsPreviewBackground.centerYAnchor],
@@ -1415,6 +1591,7 @@ static CGEventRef eventTapCallback(CGEventTapProxy proxy, CGEventType type, CGEv
 		if (gEventTap) CGEventTapEnable(gEventTap, true);
 		return event;
 	}
+	if (gIsCapturingHotkey) return event;
 	if (type != kCGEventKeyDown && type != kCGEventKeyUp && type != kCGEventFlagsChanged) return event;
 
 	CGKeyCode keycode = (CGKeyCode)CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode);
@@ -1482,6 +1659,10 @@ static void runApp(const char *localeCString) {
 		if ([defaults objectForKey:@"autoPasteEnabled"] != nil) {
 			gAutoPasteEnabled = [defaults boolForKey:@"autoPasteEnabled"];
 		}
+		if ([defaults objectForKey:@"hotKeyCode"] != nil) {
+			NSInteger hk = [defaults integerForKey:@"hotKeyCode"];
+			if (hk >= 0 && hk <= 0x7F) gHotKeyCode = (uint16_t)hk;
+		}
 		if ([defaults objectForKey:@"statusIconStyle"] != nil) {
 			NSInteger s = [defaults integerForKey:@"statusIconStyle"];
 			if (s == PKTStatusIconStyleWave || s == PKTStatusIconStyleMicro) gStatusIconStyle = s;
@@ -1515,6 +1696,7 @@ static void runApp(const char *localeCString) {
 
 		// Modifier keys (Fn/Cmd/Option/Shift/Ctrl) may not produce reliable keyDown/up events; listen to modifier flag changes.
 		void (^modifierFlagsHandler)(NSEvent *) = ^(NSEvent *e) {
+			if (gIsCapturingHotkey) return;
 			if (!isModifierHotKeyCode((CGKeyCode)gHotKeyCode)) return;
 			BOOL down = isHotKeyDownForFlags(e.modifierFlags);
 			if (down == gModifierIsDown) return;
