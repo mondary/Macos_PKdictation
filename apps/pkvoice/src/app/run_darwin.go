@@ -21,7 +21,19 @@ static bool gAutoPasteEnabled = true;
 static bool gCopyWhenFinal = false;
 static BOOL gAICleanupEnabled = NO;
 static NSString *gAICleanupModel = @"gpt-4o-mini";
-static NSString *gAIApiKey = @"";
+typedef NS_ENUM(NSInteger, PKTAIProvider) {
+	PKTAIProviderOpenAI = 0,
+	PKTAIProviderClaude = 1,
+	PKTAIProviderGemini = 2,
+	PKTAIProviderOpenRouter = 3,
+	PKTAIProviderZAI = 4,
+};
+static NSInteger gAIProvider = PKTAIProviderOpenAI;
+static NSString *gAIOpenAIKey = @"";
+static NSString *gAIClaudeKey = @"";
+static NSString *gAIGeminiKey = @"";
+static NSString *gAIOpenRouterKey = @"";
+static NSString *gAIZAIKey = @"";
 
 static SFSpeechRecognizer *gRecognizer = nil;
 static SFSpeechAudioBufferRecognitionRequest *gRequest = nil;
@@ -96,8 +108,13 @@ static NSButton *gSettingsFrenchLocaleCheckbox = nil;
 static NSButton *gSettingsHotkeyButton = nil;
 static NSSegmentedControl *gSettingsLanguageSegment = nil;
 static NSButton *gSettingsAICleanupCheckbox = nil;
+static NSSegmentedControl *gSettingsAIProviderSegment = nil;
 static NSTextField *gSettingsAIModelField = nil;
-static NSSecureTextField *gSettingsAIApiKeyField = nil;
+static NSSecureTextField *gSettingsAIOpenAIKeyField = nil;
+static NSSecureTextField *gSettingsAIClaudeKeyField = nil;
+static NSSecureTextField *gSettingsAIGeminiKeyField = nil;
+static NSSecureTextField *gSettingsAIOpenRouterKeyField = nil;
+static NSSecureTextField *gSettingsAIZAIKeyField = nil;
 static NSSlider *gSettingsMenuWidthSlider = nil;
 static NSTextField *gSettingsMenuWidthValueLabel = nil;
 static NSSegmentedControl *gSettingsThemeSegment = nil;
@@ -152,6 +169,9 @@ static void teardownSettingsWindow(void);
 static void updateNotchLabel(void);
 static void cleanTranscriptWithAIIfNeeded(NSString *text, void (^completion)(NSString *outText));
 static void maybeProcessFinalTranscript(NSString *rawText, BOOL shouldPaste, BOOL shouldCopy);
+static NSString *defaultModelForAIProvider(NSInteger provider);
+static NSInteger effectiveAIProvider(void);
+static NSString *sanitizedAIText(NSString *s, NSString *fallback);
 
 @interface MenuHandler : NSObject
 @end
@@ -202,16 +222,51 @@ static void maybeProcessFinalTranscript(NSString *rawText, BOOL shouldPaste, BOO
 	[[NSUserDefaults standardUserDefaults] setBool:gAICleanupEnabled forKey:@"aiCleanupEnabled"];
 	updateMenuState();
 }
+- (void)settingsAIProviderChanged:(id)sender {
+	NSSegmentedControl *seg = (NSSegmentedControl *)sender;
+	if (![seg isKindOfClass:[NSSegmentedControl class]]) return;
+	NSInteger selected = seg.selectedSegment;
+	if (selected < PKTAIProviderOpenAI || selected > PKTAIProviderZAI) return;
+	NSInteger previous = gAIProvider;
+	gAIProvider = selected;
+	[[NSUserDefaults standardUserDefaults] setInteger:gAIProvider forKey:@"aiProvider"];
+	if (gSettingsAIModelField) {
+		NSString *current = [gSettingsAIModelField.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+		NSString *previousDefault = defaultModelForAIProvider(previous);
+		if (current.length == 0 || [current isEqualToString:previousDefault]) {
+			NSString *nextDefault = defaultModelForAIProvider(gAIProvider);
+			gSettingsAIModelField.stringValue = nextDefault;
+			gAICleanupModel = nextDefault;
+			[[NSUserDefaults standardUserDefaults] setObject:gAICleanupModel forKey:@"aiCleanupModel"];
+		}
+		gSettingsAIModelField.placeholderString = defaultModelForAIProvider(gAIProvider);
+	}
+	updateMenuState();
+}
 - (void)settingsSaveAIConfig:(id)sender {
 	(void)sender;
 	NSString *model = gSettingsAIModelField ? [gSettingsAIModelField.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] : @"";
-	if (model.length == 0) model = @"gpt-4o-mini";
+	if (model.length == 0) model = defaultModelForAIProvider(gAIProvider);
 	gAICleanupModel = model;
 	[[NSUserDefaults standardUserDefaults] setObject:gAICleanupModel forKey:@"aiCleanupModel"];
 
-	NSString *apiKey = gSettingsAIApiKeyField ? [gSettingsAIApiKeyField.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] : @"";
-	gAIApiKey = apiKey ?: @"";
-	[[NSUserDefaults standardUserDefaults] setObject:gAIApiKey forKey:@"aiApiKey"];
+	NSString *openAIKey = gSettingsAIOpenAIKeyField ? [gSettingsAIOpenAIKeyField.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] : @"";
+	NSString *claudeKey = gSettingsAIClaudeKeyField ? [gSettingsAIClaudeKeyField.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] : @"";
+	NSString *geminiKey = gSettingsAIGeminiKeyField ? [gSettingsAIGeminiKeyField.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] : @"";
+	NSString *openRouterKey = gSettingsAIOpenRouterKeyField ? [gSettingsAIOpenRouterKeyField.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] : @"";
+	NSString *zaiKey = gSettingsAIZAIKeyField ? [gSettingsAIZAIKeyField.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] : @"";
+	gAIOpenAIKey = openAIKey ?: @"";
+	gAIClaudeKey = claudeKey ?: @"";
+	gAIGeminiKey = geminiKey ?: @"";
+	gAIOpenRouterKey = openRouterKey ?: @"";
+	gAIZAIKey = zaiKey ?: @"";
+	[[NSUserDefaults standardUserDefaults] setObject:gAIOpenAIKey forKey:@"aiApiKeyOpenAI"];
+	[[NSUserDefaults standardUserDefaults] setObject:gAIClaudeKey forKey:@"aiApiKeyClaude"];
+	[[NSUserDefaults standardUserDefaults] setObject:gAIGeminiKey forKey:@"aiApiKeyGemini"];
+	[[NSUserDefaults standardUserDefaults] setObject:gAIOpenRouterKey forKey:@"aiApiKeyOpenRouter"];
+	[[NSUserDefaults standardUserDefaults] setObject:gAIZAIKey forKey:@"aiApiKeyZAI"];
+	// Backward compatibility with previous single-key setting.
+	[[NSUserDefaults standardUserDefaults] setObject:gAIOpenAIKey forKey:@"aiApiKey"];
 	updateMenuState();
 }
 - (void)settingsChangeHotkey:(id)sender {
@@ -980,8 +1035,16 @@ static void updateMenuState(void) {
 	}
 	if (gSettingsLanguageSegment) gSettingsLanguageSegment.selectedSegment = gUILanguage;
 	if (gSettingsAICleanupCheckbox) gSettingsAICleanupCheckbox.state = gAICleanupEnabled ? NSControlStateValueOn : NSControlStateValueOff;
-	if (gSettingsAIModelField) gSettingsAIModelField.stringValue = gAICleanupModel ?: @"gpt-4o-mini";
-	if (gSettingsAIApiKeyField) gSettingsAIApiKeyField.stringValue = gAIApiKey ?: @"";
+	if (gSettingsAIProviderSegment) gSettingsAIProviderSegment.selectedSegment = effectiveAIProvider();
+	if (gSettingsAIModelField) {
+		gSettingsAIModelField.placeholderString = defaultModelForAIProvider(effectiveAIProvider());
+		gSettingsAIModelField.stringValue = gAICleanupModel ?: defaultModelForAIProvider(effectiveAIProvider());
+	}
+	if (gSettingsAIOpenAIKeyField) gSettingsAIOpenAIKeyField.stringValue = gAIOpenAIKey ?: @"";
+	if (gSettingsAIClaudeKeyField) gSettingsAIClaudeKeyField.stringValue = gAIClaudeKey ?: @"";
+	if (gSettingsAIGeminiKeyField) gSettingsAIGeminiKeyField.stringValue = gAIGeminiKey ?: @"";
+	if (gSettingsAIOpenRouterKeyField) gSettingsAIOpenRouterKeyField.stringValue = gAIOpenRouterKey ?: @"";
+	if (gSettingsAIZAIKeyField) gSettingsAIZAIKeyField.stringValue = gAIZAIKey ?: @"";
 	if (gSettingsMenuWidthSlider) gSettingsMenuWidthSlider.doubleValue = gMaxMenuTextWidth;
 	if (gSettingsMenuWidthValueLabel) gSettingsMenuWidthValueLabel.stringValue = [NSString stringWithFormat:@"%.0f px", gMaxMenuTextWidth];
 	if (gSettingsThemeSegment) gSettingsThemeSegment.selectedSegment = gGlassTheme;
@@ -1044,19 +1107,129 @@ static void rebuildRecognizer(void) {
 	}
 }
 
-static NSString *effectiveAIApiKey(void) {
-	NSString *k = [gAIApiKey stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-	if (k.length > 0) return k;
-	NSDictionary<NSString *, NSString *> *env = [[NSProcessInfo processInfo] environment];
-	NSString *envKey = env[@"PKVOICE_OPENAI_API_KEY"];
-	if (!envKey || envKey.length == 0) envKey = env[@"OPENAI_API_KEY"];
-	return envKey ?: @"";
+static NSString *defaultModelForAIProvider(NSInteger provider) {
+	switch (provider) {
+	case PKTAIProviderClaude: return @"claude-3-5-haiku-latest";
+	case PKTAIProviderGemini: return @"gemini-2.0-flash";
+	case PKTAIProviderOpenRouter: return @"openai/gpt-4o-mini";
+	case PKTAIProviderZAI: return @"glm-4-flash";
+	case PKTAIProviderOpenAI:
+	default:
+		return @"gpt-4o-mini";
+	}
 }
 
-static NSString *effectiveAIModel(void) {
+static NSInteger effectiveAIProvider(void) {
+	if (gAIProvider < PKTAIProviderOpenAI || gAIProvider > PKTAIProviderZAI) return PKTAIProviderOpenAI;
+	return gAIProvider;
+}
+
+static NSString *effectiveAIModelForProvider(NSInteger provider) {
 	NSString *m = [gAICleanupModel stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-	if (!m || m.length == 0) return @"gpt-4o-mini";
-	return m;
+	if (m && m.length > 0) return m;
+	return defaultModelForAIProvider(provider);
+}
+
+static NSString *effectiveAIApiKeyForProvider(NSInteger provider) {
+	NSDictionary<NSString *, NSString *> *env = [[NSProcessInfo processInfo] environment];
+	NSString *k = @"";
+	switch (provider) {
+	case PKTAIProviderClaude:
+		k = [gAIClaudeKey stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+		if (k.length > 0) return k;
+		k = env[@"PKVOICE_CLAUDE_API_KEY"];
+		if (!k || k.length == 0) k = env[@"ANTHROPIC_API_KEY"];
+		return k ?: @"";
+	case PKTAIProviderGemini:
+		k = [gAIGeminiKey stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+		if (k.length > 0) return k;
+		k = env[@"PKVOICE_GEMINI_API_KEY"];
+		if (!k || k.length == 0) k = env[@"GEMINI_API_KEY"];
+		if (!k || k.length == 0) k = env[@"GOOGLE_API_KEY"];
+		return k ?: @"";
+	case PKTAIProviderOpenRouter:
+		k = [gAIOpenRouterKey stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+		if (k.length > 0) return k;
+		k = env[@"PKVOICE_OPENROUTER_API_KEY"];
+		if (!k || k.length == 0) k = env[@"OPENROUTER_API_KEY"];
+		return k ?: @"";
+	case PKTAIProviderZAI:
+		k = [gAIZAIKey stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+		if (k.length > 0) return k;
+		k = env[@"PKVOICE_ZAI_API_KEY"];
+		if (!k || k.length == 0) k = env[@"ZAI_API_KEY"];
+		return k ?: @"";
+	case PKTAIProviderOpenAI:
+	default:
+		k = [gAIOpenAIKey stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+		if (k.length > 0) return k;
+		k = env[@"PKVOICE_OPENAI_API_KEY"];
+		if (!k || k.length == 0) k = env[@"OPENAI_API_KEY"];
+		return k ?: @"";
+	}
+}
+
+static NSString *aiCleanupSystemPrompt(void) {
+	return @"Tu nettoies une transcription vocale en francais. Supprime les hesitations (euh, hum), repetitions, faux departs et coupures, tout en gardant strictement le sens et les informations. Ne rajoute rien.";
+}
+
+static NSString *extractOpenAICompatibleResponseText(id json, NSString *fallback) {
+	if (![json isKindOfClass:[NSDictionary class]]) return fallback;
+	NSArray *choices = ((NSDictionary *)json)[@"choices"];
+	if (![choices isKindOfClass:[NSArray class]] || choices.count == 0) return fallback;
+	NSDictionary *choice = choices[0];
+	if (![choice isKindOfClass:[NSDictionary class]]) return fallback;
+	NSDictionary *msg = choice[@"message"];
+	if (![msg isKindOfClass:[NSDictionary class]]) return fallback;
+	id content = msg[@"content"];
+	if ([content isKindOfClass:[NSString class]]) return sanitizedAIText((NSString *)content, fallback);
+	if ([content isKindOfClass:[NSArray class]]) {
+		NSMutableArray<NSString *> *parts = [NSMutableArray array];
+		for (id it in (NSArray *)content) {
+			if ([it isKindOfClass:[NSDictionary class]]) {
+				id txt = ((NSDictionary *)it)[@"text"];
+				if ([txt isKindOfClass:[NSString class]] && [((NSString *)txt) length] > 0) [parts addObject:(NSString *)txt];
+			}
+		}
+		if (parts.count > 0) return sanitizedAIText([parts componentsJoinedByString:@" "], fallback);
+	}
+	return fallback;
+}
+
+static NSString *extractClaudeResponseText(id json, NSString *fallback) {
+	if (![json isKindOfClass:[NSDictionary class]]) return fallback;
+	NSArray *content = ((NSDictionary *)json)[@"content"];
+	if (![content isKindOfClass:[NSArray class]] || content.count == 0) return fallback;
+	NSMutableArray<NSString *> *parts = [NSMutableArray array];
+	for (id it in content) {
+		if (![it isKindOfClass:[NSDictionary class]]) continue;
+		NSDictionary *block = (NSDictionary *)it;
+		if ([block[@"type"] isKindOfClass:[NSString class]] && ![block[@"type"] isEqualToString:@"text"]) continue;
+		id txt = block[@"text"];
+		if ([txt isKindOfClass:[NSString class]] && [((NSString *)txt) length] > 0) [parts addObject:(NSString *)txt];
+	}
+	if (parts.count == 0) return fallback;
+	return sanitizedAIText([parts componentsJoinedByString:@" "], fallback);
+}
+
+static NSString *extractGeminiResponseText(id json, NSString *fallback) {
+	if (![json isKindOfClass:[NSDictionary class]]) return fallback;
+	NSArray *candidates = ((NSDictionary *)json)[@"candidates"];
+	if (![candidates isKindOfClass:[NSArray class]] || candidates.count == 0) return fallback;
+	NSDictionary *first = candidates[0];
+	if (![first isKindOfClass:[NSDictionary class]]) return fallback;
+	NSDictionary *content = first[@"content"];
+	if (![content isKindOfClass:[NSDictionary class]]) return fallback;
+	NSArray *parts = content[@"parts"];
+	if (![parts isKindOfClass:[NSArray class]] || parts.count == 0) return fallback;
+	NSMutableArray<NSString *> *texts = [NSMutableArray array];
+	for (id it in parts) {
+		if (![it isKindOfClass:[NSDictionary class]]) continue;
+		id txt = ((NSDictionary *)it)[@"text"];
+		if ([txt isKindOfClass:[NSString class]] && [((NSString *)txt) length] > 0) [texts addObject:(NSString *)txt];
+	}
+	if (texts.count == 0) return fallback;
+	return sanitizedAIText([texts componentsJoinedByString:@" "], fallback);
 }
 
 static NSString *sanitizedAIText(NSString *s, NSString *fallback) {
@@ -1075,35 +1248,68 @@ static void cleanTranscriptWithAIIfNeeded(NSString *text, void (^completion)(NSS
 		if (completion) completion(raw);
 		return;
 	}
-	NSString *apiKey = effectiveAIApiKey();
+	NSInteger provider = effectiveAIProvider();
+	NSString *apiKey = effectiveAIApiKeyForProvider(provider);
 	if (apiKey.length == 0) {
 		if (completion) completion(raw);
 		return;
 	}
-	NSString *model = effectiveAIModel();
+	NSString *model = effectiveAIModelForProvider(provider);
+	NSString *prompt = aiCleanupSystemPrompt();
 
 	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
 		@autoreleasepool {
-			NSURL *url = [NSURL URLWithString:@"https://api.openai.com/v1/chat/completions"];
-			if (!url) {
+			NSURL *url = nil;
+			NSDictionary *payload = nil;
+			NSMutableURLRequest *req = nil;
+			BOOL usesBearerHeader = YES;
+
+			if (provider == PKTAIProviderGemini) {
+				NSString *escapedModel = [model stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLPathAllowedCharacterSet]] ?: model;
+				NSString *escapedKey = [apiKey stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLQueryAllowedCharacterSet]] ?: apiKey;
+				NSString *urlString = [NSString stringWithFormat:@"https://generativelanguage.googleapis.com/v1beta/models/%@:generateContent?key=%@", escapedModel, escapedKey];
+				url = [NSURL URLWithString:urlString];
+				payload = @{
+					@"systemInstruction": @{ @"parts": @[ @{ @"text": prompt } ] },
+					@"contents": @[ @{ @"parts": @[ @{ @"text": raw } ] } ],
+					@"generationConfig": @{ @"temperature": @0.1 }
+				};
+				usesBearerHeader = NO;
+			} else if (provider == PKTAIProviderClaude) {
+				url = [NSURL URLWithString:@"https://api.anthropic.com/v1/messages"];
+				payload = @{
+					@"model": model,
+					@"max_tokens": @512,
+					@"temperature": @0.1,
+					@"system": prompt,
+					@"messages": @[ @{ @"role": @"user", @"content": raw } ]
+				};
+				usesBearerHeader = NO;
+			} else {
+				NSString *endpoint = @"https://api.openai.com/v1/chat/completions";
+				if (provider == PKTAIProviderOpenRouter) endpoint = @"https://openrouter.ai/api/v1/chat/completions";
+				if (provider == PKTAIProviderZAI) endpoint = @"https://api.z.ai/api/paas/v4/chat/completions";
+				url = [NSURL URLWithString:endpoint];
+				payload = @{
+					@"model": model,
+					@"temperature": @0.1,
+					@"messages": @[
+						@{
+							@"role": @"system",
+							@"content": prompt
+						},
+						@{
+							@"role": @"user",
+							@"content": raw
+						}
+					]
+				};
+			}
+			if (!url || !payload) {
 				dispatch_async(dispatch_get_main_queue(), ^{ if (completion) completion(raw); });
 				return;
 			}
 
-			NSDictionary *payload = @{
-				@"model": model,
-				@"temperature": @0.1,
-				@"messages": @[
-					@{
-						@"role": @"system",
-						@"content": @"Tu nettoies une transcription vocale en francais. Supprime les hesitations (euh, hum), repetitions, faux departs et coupures, tout en gardant strictement le sens et les informations. Ne rajoute rien."
-					},
-					@{
-						@"role": @"user",
-						@"content": raw
-					}
-				]
-			};
 			NSError *jsonErr = nil;
 			NSData *body = [NSJSONSerialization dataWithJSONObject:payload options:0 error:&jsonErr];
 			if (!body || jsonErr) {
@@ -1111,18 +1317,30 @@ static void cleanTranscriptWithAIIfNeeded(NSString *text, void (^completion)(NSS
 				return;
 			}
 
-			NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url];
+			req = [NSMutableURLRequest requestWithURL:url];
 			req.HTTPMethod = @"POST";
-			req.timeoutInterval = 15.0;
+			req.timeoutInterval = 20.0;
 			[req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
-			[req setValue:[NSString stringWithFormat:@"Bearer %@", apiKey] forHTTPHeaderField:@"Authorization"];
+			if (provider == PKTAIProviderClaude) {
+				[req setValue:apiKey forHTTPHeaderField:@"x-api-key"];
+				[req setValue:@"2023-06-01" forHTTPHeaderField:@"anthropic-version"];
+			} else if (usesBearerHeader) {
+				[req setValue:[NSString stringWithFormat:@"Bearer %@", apiKey] forHTTPHeaderField:@"Authorization"];
+				if (provider == PKTAIProviderOpenRouter) {
+					[req setValue:@"https://pkvoice.local" forHTTPHeaderField:@"HTTP-Referer"];
+					[req setValue:@"PKvoice" forHTTPHeaderField:@"X-Title"];
+				}
+			}
 			req.HTTPBody = body;
 
 			dispatch_semaphore_t sem = dispatch_semaphore_create(0);
 			__block NSData *respData = nil;
 			__block NSError *respErr = nil;
+			__block NSInteger statusCode = 0;
 			NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
-				(void)response;
+				if ([response isKindOfClass:[NSHTTPURLResponse class]]) {
+					statusCode = ((NSHTTPURLResponse *)response).statusCode;
+				}
 				respData = data;
 				respErr = error;
 				dispatch_semaphore_signal(sem);
@@ -1130,7 +1348,7 @@ static void cleanTranscriptWithAIIfNeeded(NSString *text, void (^completion)(NSS
 			[task resume];
 			dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(16 * NSEC_PER_SEC)));
 
-			if (respErr || !respData) {
+			if (respErr || !respData || statusCode < 200 || statusCode >= 300) {
 				dispatch_async(dispatch_get_main_queue(), ^{ if (completion) completion(raw); });
 				return;
 			}
@@ -1138,17 +1356,20 @@ static void cleanTranscriptWithAIIfNeeded(NSString *text, void (^completion)(NSS
 			NSError *parseErr = nil;
 			id json = [NSJSONSerialization JSONObjectWithData:respData options:0 error:&parseErr];
 			NSString *out = raw;
-			if (!parseErr && [json isKindOfClass:[NSDictionary class]]) {
-				NSArray *choices = ((NSDictionary *)json)[@"choices"];
-				if ([choices isKindOfClass:[NSArray class]] && choices.count > 0) {
-					NSDictionary *choice = choices[0];
-					if ([choice isKindOfClass:[NSDictionary class]]) {
-						NSDictionary *msg = choice[@"message"];
-						if ([msg isKindOfClass:[NSDictionary class]]) {
-							NSString *content = msg[@"content"];
-							if ([content isKindOfClass:[NSString class]]) out = sanitizedAIText(content, raw);
-						}
-					}
+			if (!parseErr) {
+				switch (provider) {
+				case PKTAIProviderClaude:
+					out = extractClaudeResponseText(json, raw);
+					break;
+				case PKTAIProviderGemini:
+					out = extractGeminiResponseText(json, raw);
+					break;
+				case PKTAIProviderOpenRouter:
+				case PKTAIProviderZAI:
+				case PKTAIProviderOpenAI:
+				default:
+					out = extractOpenAICompatibleResponseText(json, raw);
+					break;
 				}
 			}
 			dispatch_async(dispatch_get_main_queue(), ^{
@@ -1347,8 +1568,13 @@ static void teardownSettingsWindow(void) {
 	gSettingsHotkeyButton = nil;
 	gSettingsLanguageSegment = nil;
 	gSettingsAICleanupCheckbox = nil;
+	gSettingsAIProviderSegment = nil;
 	gSettingsAIModelField = nil;
-	gSettingsAIApiKeyField = nil;
+	gSettingsAIOpenAIKeyField = nil;
+	gSettingsAIClaudeKeyField = nil;
+	gSettingsAIGeminiKeyField = nil;
+	gSettingsAIOpenRouterKeyField = nil;
+	gSettingsAIZAIKeyField = nil;
 	gSettingsMenuWidthSlider = nil;
 	gSettingsMenuWidthValueLabel = nil;
 	gSettingsThemeSegment = nil;
@@ -1377,7 +1603,7 @@ static void showSettingsWindow(void) {
 		return;
 	}
 
-	NSRect frame = NSMakeRect(0, 0, 520, 760);
+	NSRect frame = NSMakeRect(0, 0, 520, 930);
 	NSWindowStyleMask style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable;
 	gSettingsWindow = [[NSWindow alloc] initWithContentRect:frame styleMask:style backing:NSBackingStoreBuffered defer:NO];
 	gSettingsWindow.title = [NSString stringWithFormat:@"PKvoice — %@", uiText(@"Paramètres", @"Settings")];
@@ -1450,32 +1676,81 @@ static void showSettingsWindow(void) {
 	gSettingsAICleanupCheckbox.translatesAutoresizingMaskIntoConstraints = NO;
 	[content addSubview:gSettingsAICleanupCheckbox];
 
+	NSTextField *aiProviderLabel = [NSTextField labelWithString:uiText(@"Provider", @"Provider")];
+	aiProviderLabel.translatesAutoresizingMaskIntoConstraints = NO;
+	[content addSubview:aiProviderLabel];
+
+	gSettingsAIProviderSegment = [NSSegmentedControl segmentedControlWithLabels:@[ @"OpenAI", @"Claude", @"Gemini", @"OpenRouter", @"Z.AI" ] trackingMode:NSSegmentSwitchTrackingSelectOne target:gMenuHandler action:@selector(settingsAIProviderChanged:)];
+	gSettingsAIProviderSegment.selectedSegment = effectiveAIProvider();
+	gSettingsAIProviderSegment.translatesAutoresizingMaskIntoConstraints = NO;
+	[content addSubview:gSettingsAIProviderSegment];
+
 	NSTextField *aiModelLabel = [NSTextField labelWithString:uiText(@"Modèle", @"Model")];
 	aiModelLabel.translatesAutoresizingMaskIntoConstraints = NO;
 	[content addSubview:aiModelLabel];
 
 	gSettingsAIModelField = [NSTextField new];
 	gSettingsAIModelField.translatesAutoresizingMaskIntoConstraints = NO;
-	gSettingsAIModelField.placeholderString = @"gpt-4o-mini";
-	gSettingsAIModelField.stringValue = gAICleanupModel ?: @"gpt-4o-mini";
+	gSettingsAIModelField.placeholderString = defaultModelForAIProvider(effectiveAIProvider());
+	gSettingsAIModelField.stringValue = gAICleanupModel ?: defaultModelForAIProvider(effectiveAIProvider());
 	[content addSubview:gSettingsAIModelField];
 
-	NSTextField *aiApiKeyLabel = [NSTextField labelWithString:uiText(@"Clé API OpenAI", @"OpenAI API key")];
-	aiApiKeyLabel.translatesAutoresizingMaskIntoConstraints = NO;
-	[content addSubview:aiApiKeyLabel];
+	NSTextField *openAIKeyLabel = [NSTextField labelWithString:@"OpenAI API key"];
+	openAIKeyLabel.translatesAutoresizingMaskIntoConstraints = NO;
+	[content addSubview:openAIKeyLabel];
 
-	gSettingsAIApiKeyField = [NSSecureTextField new];
-	gSettingsAIApiKeyField.translatesAutoresizingMaskIntoConstraints = NO;
-	gSettingsAIApiKeyField.placeholderString = @"sk-...";
-	gSettingsAIApiKeyField.stringValue = gAIApiKey ?: @"";
-	[content addSubview:gSettingsAIApiKeyField];
+	gSettingsAIOpenAIKeyField = [NSSecureTextField new];
+	gSettingsAIOpenAIKeyField.translatesAutoresizingMaskIntoConstraints = NO;
+	gSettingsAIOpenAIKeyField.placeholderString = @"sk-...";
+	gSettingsAIOpenAIKeyField.stringValue = gAIOpenAIKey ?: @"";
+	[content addSubview:gSettingsAIOpenAIKeyField];
+
+	NSTextField *claudeKeyLabel = [NSTextField labelWithString:@"Claude API key"];
+	claudeKeyLabel.translatesAutoresizingMaskIntoConstraints = NO;
+	[content addSubview:claudeKeyLabel];
+
+	gSettingsAIClaudeKeyField = [NSSecureTextField new];
+	gSettingsAIClaudeKeyField.translatesAutoresizingMaskIntoConstraints = NO;
+	gSettingsAIClaudeKeyField.placeholderString = @"sk-ant-...";
+	gSettingsAIClaudeKeyField.stringValue = gAIClaudeKey ?: @"";
+	[content addSubview:gSettingsAIClaudeKeyField];
+
+	NSTextField *geminiKeyLabel = [NSTextField labelWithString:@"Gemini API key"];
+	geminiKeyLabel.translatesAutoresizingMaskIntoConstraints = NO;
+	[content addSubview:geminiKeyLabel];
+
+	gSettingsAIGeminiKeyField = [NSSecureTextField new];
+	gSettingsAIGeminiKeyField.translatesAutoresizingMaskIntoConstraints = NO;
+	gSettingsAIGeminiKeyField.placeholderString = @"AIza...";
+	gSettingsAIGeminiKeyField.stringValue = gAIGeminiKey ?: @"";
+	[content addSubview:gSettingsAIGeminiKeyField];
+
+	NSTextField *openRouterKeyLabel = [NSTextField labelWithString:@"OpenRouter API key"];
+	openRouterKeyLabel.translatesAutoresizingMaskIntoConstraints = NO;
+	[content addSubview:openRouterKeyLabel];
+
+	gSettingsAIOpenRouterKeyField = [NSSecureTextField new];
+	gSettingsAIOpenRouterKeyField.translatesAutoresizingMaskIntoConstraints = NO;
+	gSettingsAIOpenRouterKeyField.placeholderString = @"sk-or-...";
+	gSettingsAIOpenRouterKeyField.stringValue = gAIOpenRouterKey ?: @"";
+	[content addSubview:gSettingsAIOpenRouterKeyField];
+
+	NSTextField *zaiKeyLabel = [NSTextField labelWithString:@"Z.AI API key"];
+	zaiKeyLabel.translatesAutoresizingMaskIntoConstraints = NO;
+	[content addSubview:zaiKeyLabel];
+
+	gSettingsAIZAIKeyField = [NSSecureTextField new];
+	gSettingsAIZAIKeyField.translatesAutoresizingMaskIntoConstraints = NO;
+	gSettingsAIZAIKeyField.placeholderString = @"zai_...";
+	gSettingsAIZAIKeyField.stringValue = gAIZAIKey ?: @"";
+	[content addSubview:gSettingsAIZAIKeyField];
 
 	NSButton *aiSaveButton = [NSButton buttonWithTitle:uiText(@"Enregistrer IA", @"Save AI") target:gMenuHandler action:@selector(settingsSaveAIConfig:)];
 	aiSaveButton.translatesAutoresizingMaskIntoConstraints = NO;
 	aiSaveButton.bezelStyle = NSBezelStyleRounded;
 	[content addSubview:aiSaveButton];
 
-	NSTextField *translationValueLabel = [NSTextField labelWithString:uiText(@"Traduction : désactivée (à venir)", @"Translation: disabled (coming soon)")];
+	NSTextField *translationValueLabel = [NSTextField labelWithString:uiText(@"Traduction : à venir", @"Translation: coming soon")];
 	translationValueLabel.font = [NSFont systemFontOfSize:12];
 	translationValueLabel.textColor = [NSColor secondaryLabelColor];
 	translationValueLabel.translatesAutoresizingMaskIntoConstraints = NO;
@@ -1707,21 +1982,56 @@ static void showSettingsWindow(void) {
 		[gSettingsAICleanupCheckbox.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
 		[gSettingsAICleanupCheckbox.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
 
-		[aiModelLabel.topAnchor constraintEqualToAnchor:gSettingsAICleanupCheckbox.bottomAnchor constant:10],
+		[aiProviderLabel.topAnchor constraintEqualToAnchor:gSettingsAICleanupCheckbox.bottomAnchor constant:10],
+		[aiProviderLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
+
+		[gSettingsAIProviderSegment.centerYAnchor constraintEqualToAnchor:aiProviderLabel.centerYAnchor],
+		[gSettingsAIProviderSegment.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
+		[gSettingsAIProviderSegment.widthAnchor constraintEqualToConstant:340],
+
+		[aiModelLabel.topAnchor constraintEqualToAnchor:aiProviderLabel.bottomAnchor constant:10],
 		[aiModelLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
 
 		[gSettingsAIModelField.centerYAnchor constraintEqualToAnchor:aiModelLabel.centerYAnchor],
 		[gSettingsAIModelField.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
-		[gSettingsAIModelField.widthAnchor constraintEqualToConstant:210],
+		[gSettingsAIModelField.widthAnchor constraintEqualToConstant:260],
 
-		[aiApiKeyLabel.topAnchor constraintEqualToAnchor:aiModelLabel.bottomAnchor constant:10],
-		[aiApiKeyLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
+		[openAIKeyLabel.topAnchor constraintEqualToAnchor:aiModelLabel.bottomAnchor constant:10],
+		[openAIKeyLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
 
-		[gSettingsAIApiKeyField.centerYAnchor constraintEqualToAnchor:aiApiKeyLabel.centerYAnchor],
-		[gSettingsAIApiKeyField.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
-		[gSettingsAIApiKeyField.widthAnchor constraintEqualToConstant:240],
+		[gSettingsAIOpenAIKeyField.centerYAnchor constraintEqualToAnchor:openAIKeyLabel.centerYAnchor],
+		[gSettingsAIOpenAIKeyField.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
+		[gSettingsAIOpenAIKeyField.widthAnchor constraintEqualToConstant:260],
 
-		[aiSaveButton.topAnchor constraintEqualToAnchor:gSettingsAIApiKeyField.bottomAnchor constant:8],
+		[claudeKeyLabel.topAnchor constraintEqualToAnchor:openAIKeyLabel.bottomAnchor constant:8],
+		[claudeKeyLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
+
+		[gSettingsAIClaudeKeyField.centerYAnchor constraintEqualToAnchor:claudeKeyLabel.centerYAnchor],
+		[gSettingsAIClaudeKeyField.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
+		[gSettingsAIClaudeKeyField.widthAnchor constraintEqualToConstant:260],
+
+		[geminiKeyLabel.topAnchor constraintEqualToAnchor:claudeKeyLabel.bottomAnchor constant:8],
+		[geminiKeyLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
+
+		[gSettingsAIGeminiKeyField.centerYAnchor constraintEqualToAnchor:geminiKeyLabel.centerYAnchor],
+		[gSettingsAIGeminiKeyField.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
+		[gSettingsAIGeminiKeyField.widthAnchor constraintEqualToConstant:260],
+
+		[openRouterKeyLabel.topAnchor constraintEqualToAnchor:geminiKeyLabel.bottomAnchor constant:8],
+		[openRouterKeyLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
+
+		[gSettingsAIOpenRouterKeyField.centerYAnchor constraintEqualToAnchor:openRouterKeyLabel.centerYAnchor],
+		[gSettingsAIOpenRouterKeyField.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
+		[gSettingsAIOpenRouterKeyField.widthAnchor constraintEqualToConstant:260],
+
+		[zaiKeyLabel.topAnchor constraintEqualToAnchor:openRouterKeyLabel.bottomAnchor constant:8],
+		[zaiKeyLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
+
+		[gSettingsAIZAIKeyField.centerYAnchor constraintEqualToAnchor:zaiKeyLabel.centerYAnchor],
+		[gSettingsAIZAIKeyField.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
+		[gSettingsAIZAIKeyField.widthAnchor constraintEqualToConstant:260],
+
+		[aiSaveButton.topAnchor constraintEqualToAnchor:gSettingsAIZAIKeyField.bottomAnchor constant:8],
 		[aiSaveButton.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
 
 		[translationValueLabel.topAnchor constraintEqualToAnchor:aiSaveButton.bottomAnchor constant:8],
@@ -1980,9 +2290,37 @@ static void runApp(const char *localeCString) {
 			NSString *m = [defaults stringForKey:@"aiCleanupModel"];
 			if (m && m.length > 0) gAICleanupModel = m;
 		}
-		if ([defaults objectForKey:@"aiApiKey"] != nil) {
-			NSString *k = [defaults stringForKey:@"aiApiKey"];
-			gAIApiKey = k ?: @"";
+		if ([defaults objectForKey:@"aiProvider"] != nil) {
+			NSInteger provider = [defaults integerForKey:@"aiProvider"];
+			if (provider >= PKTAIProviderOpenAI && provider <= PKTAIProviderZAI) gAIProvider = provider;
+		}
+		if ([defaults objectForKey:@"aiApiKeyOpenAI"] != nil) {
+			NSString *k = [defaults stringForKey:@"aiApiKeyOpenAI"];
+			gAIOpenAIKey = k ?: @"";
+		}
+		if ([defaults objectForKey:@"aiApiKeyClaude"] != nil) {
+			NSString *k = [defaults stringForKey:@"aiApiKeyClaude"];
+			gAIClaudeKey = k ?: @"";
+		}
+		if ([defaults objectForKey:@"aiApiKeyGemini"] != nil) {
+			NSString *k = [defaults stringForKey:@"aiApiKeyGemini"];
+			gAIGeminiKey = k ?: @"";
+		}
+		if ([defaults objectForKey:@"aiApiKeyOpenRouter"] != nil) {
+			NSString *k = [defaults stringForKey:@"aiApiKeyOpenRouter"];
+			gAIOpenRouterKey = k ?: @"";
+		}
+		if ([defaults objectForKey:@"aiApiKeyZAI"] != nil) {
+			NSString *k = [defaults stringForKey:@"aiApiKeyZAI"];
+			gAIZAIKey = k ?: @"";
+		}
+		if ([defaults objectForKey:@"aiCleanupModel"] == nil) {
+			gAICleanupModel = defaultModelForAIProvider(gAIProvider);
+		}
+		// Migration: old single provider key -> OpenAI key.
+		if ((!gAIOpenAIKey || gAIOpenAIKey.length == 0) && [defaults objectForKey:@"aiApiKey"] != nil) {
+			NSString *legacy = [defaults stringForKey:@"aiApiKey"];
+			gAIOpenAIKey = legacy ?: @"";
 		}
 		if ([defaults objectForKey:@"hotKeyCode"] != nil) {
 			NSInteger hk = [defaults integerForKey:@"hotKeyCode"];

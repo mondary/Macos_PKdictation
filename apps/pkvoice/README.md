@@ -74,8 +74,15 @@ Note:
   - Quitter : *Quitter PKvoice*
 - Dans `Settings` → `IA Texte` :
   - active **nettoyage IA** pour supprimer `euh`, répétitions, faux départs
-  - configure `Modèle` (ex: `gpt-4o-mini`)
-  - renseigne la clé API OpenAI (ou via variable d'environnement `PKVOICE_OPENAI_API_KEY` / `OPENAI_API_KEY`)
+  - choisis le provider : `OpenAI`, `Claude`, `Gemini`, `OpenRouter` ou `Z.AI`
+  - configure `Modèle` (selon le provider choisi)
+  - renseigne les clés API dédiées directement dans les settings
+  - fallback via variables d’environnement :
+    - OpenAI : `PKVOICE_OPENAI_API_KEY` / `OPENAI_API_KEY`
+    - Claude : `PKVOICE_CLAUDE_API_KEY` / `ANTHROPIC_API_KEY`
+    - Gemini : `PKVOICE_GEMINI_API_KEY` / `GEMINI_API_KEY` / `GOOGLE_API_KEY`
+    - OpenRouter : `PKVOICE_OPENROUTER_API_KEY` / `OPENROUTER_API_KEY`
+    - Z.AI : `PKVOICE_ZAI_API_KEY` / `ZAI_API_KEY`
 
 ### Choisir une touche / locale
 
@@ -94,6 +101,8 @@ Hotkeys utiles (push-to-talk) :
 
 ## Changelog
 
+- `2026-02-27` : Version par défaut incrémentée à `2.2` (app principale + notch test).
+- `2026-02-27` : `IA Texte` passe en multi-provider avec clés séparées : `OpenAI`, `Claude`, `Gemini`, `OpenRouter`, `Z.AI`.
 - `2026-02-27` : Version par défaut incrémentée à `2.1` (app principale + notch test).
 - `2026-02-27` : Ajout du nettoyage IA optionnel de la transcription finale (suppression des hésitations/répétitions), configurable dans `Settings` (`IA Texte`: toggle, modèle, clé API).
 - `2026-02-27` : Passage de version majeure en `2.0` (app principale + notch test).
