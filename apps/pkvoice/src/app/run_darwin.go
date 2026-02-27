@@ -88,7 +88,6 @@ static BOOL gDidShowAccessibilityAlert = NO;
 static NSWindow *gSettingsWindow = nil;
 static NSVisualEffectView *gSettingsBackground = nil;
 static NSView *gSettingsContent = nil;
-static NSTextField *gSettingsMetaLabel = nil;
 static NSButton *gSettingsAutoPasteCheckbox = nil;
 static NSButton *gSettingsFrenchLocaleCheckbox = nil;
 static NSButton *gSettingsHotkeyButton = nil;
@@ -140,7 +139,6 @@ static void syncSpinnerSettingsUI(void);
 static NSString *hotkeyNameForKeycode(CGKeyCode keycode);
 static void updateSettingsHotkeyButtonTitle(void);
 static void stopHotkeyCapture(void);
-static NSString *settingsMetaText(void);
 static NSString *effectiveRecognizerLocale(void);
 static void rebuildRecognizer(void);
 static NSString *uiText(NSString *fr, NSString *en);
@@ -938,7 +936,6 @@ static void hideNotch(void) {
 
 static void updateMenuState(void) {
 	if (gSettingsAutoPasteCheckbox) gSettingsAutoPasteCheckbox.state = gAutoPasteEnabled ? NSControlStateValueOn : NSControlStateValueOff;
-	if (gSettingsMetaLabel) gSettingsMetaLabel.stringValue = settingsMetaText();
 	updateSettingsHotkeyButtonTitle();
 	if (gSettingsFrenchLocaleCheckbox) {
 		gSettingsFrenchLocaleCheckbox.state = gForceFrenchLocale ? NSControlStateValueOn : NSControlStateValueOff;
@@ -984,11 +981,6 @@ static void updateMenuState(void) {
 
 static NSString *hotkeyTitle(void) {
 	return [NSString stringWithFormat:@"%@ : %@ (%@)", uiText(@"Raccourci", @"Hotkey"), hotkeyNameForKeycode((CGKeyCode)gHotKeyCode), uiText(@"maintenir", @"hold")];
-}
-
-static NSString *settingsMetaText(void) {
-	NSString *locale = (gLocaleIdentifier && gLocaleIdentifier.length > 0) ? gLocaleIdentifier : @"system";
-	return [NSString stringWithFormat:@"%@\n%@ : %@", hotkeyTitle(), uiText(@"Locale", @"Locale"), locale];
 }
 
 static NSString *effectiveRecognizerLocale(void) {
@@ -1180,7 +1172,6 @@ static void teardownSettingsWindow(void) {
 	gSettingsWindow = nil;
 	gSettingsBackground = nil;
 	gSettingsContent = nil;
-	gSettingsMetaLabel = nil;
 	gSettingsAutoPasteCheckbox = nil;
 	gSettingsFrenchLocaleCheckbox = nil;
 	gSettingsHotkeyButton = nil;
@@ -1242,13 +1233,6 @@ static void showSettingsWindow(void) {
 	[content addSubview:title];
 
 	NSString *appVersion = [[[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"] description] ?: @"?";
-	gSettingsMetaLabel = [NSTextField labelWithString:settingsMetaText()];
-	gSettingsMetaLabel.font = [NSFont systemFontOfSize:12];
-	gSettingsMetaLabel.textColor = [NSColor secondaryLabelColor];
-	gSettingsMetaLabel.lineBreakMode = NSLineBreakByWordWrapping;
-	gSettingsMetaLabel.translatesAutoresizingMaskIntoConstraints = NO;
-	[content addSubview:gSettingsMetaLabel];
-
 	NSTextField *transcriptionSectionLabel = [NSTextField labelWithString:uiText(@"Transcription", @"Transcription")];
 	transcriptionSectionLabel.font = [NSFont boldSystemFontOfSize:13];
 	transcriptionSectionLabel.translatesAutoresizingMaskIntoConstraints = NO;
@@ -1494,11 +1478,7 @@ static void showSettingsWindow(void) {
 		[title.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
 		[title.trailingAnchor constraintLessThanOrEqualToAnchor:content.trailingAnchor constant:-18],
 
-		[gSettingsMetaLabel.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:6],
-		[gSettingsMetaLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
-		[gSettingsMetaLabel.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
-
-		[transcriptionSectionLabel.topAnchor constraintEqualToAnchor:gSettingsMetaLabel.bottomAnchor constant:16],
+		[transcriptionSectionLabel.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:14],
 		[transcriptionSectionLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
 
 		[uiLangLabel.topAnchor constraintEqualToAnchor:transcriptionSectionLabel.bottomAnchor constant:10],
