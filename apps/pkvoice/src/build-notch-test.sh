@@ -3,7 +3,7 @@ set -euo pipefail
 
 APP_NAME="PKvoiceNotchTest"
 BUNDLE_ID="com.example.pkvoice.notchtest"
-APP_VERSION="${APP_VERSION:-1.15}"
+APP_VERSION="${APP_VERSION:-2.0}"
 
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SRC_DIR/.." && pwd)"

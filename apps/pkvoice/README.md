@@ -35,7 +35,7 @@ open release/PKvoice.app
 Build avec version explicite :
 
 ```bash
-APP_VERSION=1.15 ./src/build-app.sh
+APP_VERSION=2.0 ./src/build-app.sh
 ```
 
 ## Test du notch (sandbox séparé)
@@ -90,6 +90,7 @@ Hotkeys utiles (push-to-talk) :
 
 ## Changelog
 
+- `2026-02-27` : Passage de version majeure en `2.0` (app principale + notch test).
 - `2026-02-27` : Version par défaut incrémentée à `1.15` (app principale + notch test).
 - `2026-02-27` : Notch : suppression du suffixe de pattern (`... · Wave`) dans le libellé ; affichage live de la transcription, sinon `Enregistrement…`.
 - `2026-02-27` : Version par défaut incrémentée à `1.14` (app principale + notch test).
