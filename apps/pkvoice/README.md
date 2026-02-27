@@ -90,6 +90,7 @@ Hotkeys utiles (push-to-talk) :
 
 ## Changelog
 
+- `2026-02-27` : Suppression de la ligne `Auto-paste` du popover principal (au-dessus de l'historique) ; l'option reste disponible uniquement dans `Settings`.
 - `2026-02-26` : `PKvoiceNotchTest` ajoute un **sélecteur de couleur** (macOS `NSColorWell`) pour choisir librement la couleur d'accent du spinner, en plus des presets `Wave` / `Micro`.
 - `2026-02-26` : `PKvoiceNotchTest` permet maintenant de choisir le **pattern** du spinner dot-matrix (`Wave`, `Spinner`, `Pulse`, `Cross`, `Burst`, `ArrowMove`, `Sine Wave`) en plus du thème couleur (`Wave` / `Micro`).
 - `2026-02-26` : `PKvoiceNotchTest` utilise maintenant un spinner **dot-matrix 3x3** animé (clockwise) inspiré du CSS fourni (accent magenta/glow, variante rouge en mode `Micro`).

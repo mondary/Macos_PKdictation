@@ -47,7 +47,6 @@ static NSImage *gStatusBaseIcon = nil;
 static NSPopover *gPopover = nil;
 static NSVisualEffectView *gPopoverBackground = nil;
 static NSTextField *gPopoverHotkeyLabel = nil;
-static NSButton *gPopoverAutoPasteCheckbox = nil;
 static NSButton *gPopoverSettingsButton = nil;
 static NSTextField *gPopoverHistoryHeader = nil;
 static NSButton *gPopoverHistoryButtons[10] = { nil };
@@ -91,13 +90,6 @@ static void applySettingsTheme(void);
 - (void)statusItemClicked:(id)sender {
 	(void)sender;
 	togglePopover();
-}
-- (void)popoverToggleAutoPaste:(id)sender {
-	NSButton *b = (NSButton *)sender;
-	if (![b isKindOfClass:[NSButton class]]) return;
-	gAutoPasteEnabled = (b.state == NSControlStateValueOn);
-	[[NSUserDefaults standardUserDefaults] setBool:gAutoPasteEnabled forKey:@"autoPasteEnabled"];
-	updateMenuState();
 }
 - (void)popoverOpenSettings:(id)sender {
 	(void)sender;
@@ -364,7 +356,6 @@ static bool isHotKeyDownForFlags(NSEventModifierFlags flags) {
 
 static void updateMenuState(void) {
 	if (gSettingsAutoPasteCheckbox) gSettingsAutoPasteCheckbox.state = gAutoPasteEnabled ? NSControlStateValueOn : NSControlStateValueOff;
-	if (gPopoverAutoPasteCheckbox) gPopoverAutoPasteCheckbox.state = gAutoPasteEnabled ? NSControlStateValueOn : NSControlStateValueOff;
 	if (gSettingsMenuWidthSlider) gSettingsMenuWidthSlider.doubleValue = gMaxMenuTextWidth;
 	if (gSettingsMenuWidthValueLabel) gSettingsMenuWidthValueLabel.stringValue = [NSString stringWithFormat:@"%.0f px", gMaxMenuTextWidth];
 	if (gSettingsThemeSegment) gSettingsThemeSegment.selectedSegment = gGlassTheme;
@@ -473,9 +464,6 @@ static void ensurePopover(void) {
 	gPopoverHotkeyLabel.alignment = NSTextAlignmentLeft;
 	gPopoverHotkeyLabel.translatesAutoresizingMaskIntoConstraints = NO;
 
-	gPopoverAutoPasteCheckbox = [NSButton checkboxWithTitle:@"Auto-paste (Cmd+V)" target:gMenuHandler action:@selector(popoverToggleAutoPaste:)];
-	gPopoverAutoPasteCheckbox.translatesAutoresizingMaskIntoConstraints = NO;
-
 	gPopoverSettingsButton = [NSButton buttonWithTitle:@"Settings…" target:gMenuHandler action:@selector(popoverOpenSettings:)];
 	gPopoverSettingsButton.bordered = YES;
 	gPopoverSettingsButton.bezelStyle = NSBezelStyleTexturedRounded;
@@ -545,7 +533,6 @@ static void ensurePopover(void) {
 
 	[gPopoverStack addArrangedSubview:title];
 	[gPopoverStack addArrangedSubview:gPopoverHotkeyLabel];
-	[gPopoverStack addArrangedSubview:gPopoverAutoPasteCheckbox];
 	[gPopoverStack addArrangedSubview:sep1];
 	[gPopoverStack addArrangedSubview:gPopoverHistoryHeader];
 	[gPopoverStack addArrangedSubview:historyStack];
