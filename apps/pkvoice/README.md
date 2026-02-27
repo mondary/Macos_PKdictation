@@ -35,7 +35,7 @@ open release/PKvoice.app
 Build avec version explicite :
 
 ```bash
-APP_VERSION=1.11 ./src/build-app.sh
+APP_VERSION=1.12 ./src/build-app.sh
 ```
 
 ## Test du notch (sandbox séparé)
@@ -90,6 +90,10 @@ Hotkeys utiles (push-to-talk) :
 
 ## Changelog
 
+- `2026-02-27` : Version par défaut incrémentée à `1.12` (app principale + notch test).
+- `2026-02-27` : UI localisée par défaut en français + sélecteur de langue `FR/ENG` dans `Settings`.
+- `2026-02-27` : Ajout d'un réglage `Maintenir locale FR-FR` (activé par défaut) pour la reconnaissance vocale.
+- `2026-02-27` : Popover: boutons `Paramètres…` et `Quitter` ferrés en bas en permanence.
 - `2026-02-27` : Version par défaut incrémentée à `1.11` (app principale + notch test) ; désormais incrément de version à chaque commit.
 - `2026-02-27` : Correctif Settings : la ligne `Raccourci : ... (maintenir)` en haut se met maintenant à jour immédiatement après changement de touche.
 - `2026-02-27` : Settings restructurés en sections (`Transcription`, `Model & Traduction`, `Menu`, `Notch Animation`), ajout d'un bouton de capture du raccourci clavier (clic puis touche, `Fn` par défaut), et déplacement de la version en pied de fenêtre.

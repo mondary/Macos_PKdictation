@@ -30,6 +30,8 @@ static NSMutableArray<NSString *> *gTranscriptHistory = nil;
 static bool gDidCommitTranscript = false;
 static CGFloat gMaxMenuTextWidth = 280.0;
 static NSString *gLocaleIdentifier = @"";
+static NSString *gLocaleOverrideIdentifier = @"";
+static BOOL gForceFrenchLocale = YES;
 static const int64_t gMinHoldToRecordMs = 250;
 static uint64_t gPendingStartSeq = 0;
 
@@ -60,10 +62,15 @@ typedef NS_ENUM(NSInteger, PKTSpinnerColor) {
 	PKTSpinnerColorOrange = 4,
 	PKTSpinnerColorPurple = 5,
 };
+typedef NS_ENUM(NSInteger, PKTUILanguage) {
+	PKTUILanguageFR = 0,
+	PKTUILanguageEN = 1,
+};
 static NSInteger gGlassTheme = PKTGlassThemeDark;
 static NSInteger gStatusIconStyle = PKTStatusIconStyleMicro;
 static NSInteger gSpinnerPattern = PKTSpinnerPatternSpinner;
 static NSInteger gSpinnerColor = PKTSpinnerColorMagenta;
+static NSInteger gUILanguage = PKTUILanguageFR;
 static NSImage *gStatusBaseIcon = nil;
 static NSPopover *gPopover = nil;
 static NSVisualEffectView *gPopoverBackground = nil;
@@ -83,7 +90,9 @@ static NSVisualEffectView *gSettingsBackground = nil;
 static NSView *gSettingsContent = nil;
 static NSTextField *gSettingsMetaLabel = nil;
 static NSButton *gSettingsAutoPasteCheckbox = nil;
+static NSButton *gSettingsFrenchLocaleCheckbox = nil;
 static NSButton *gSettingsHotkeyButton = nil;
+static NSSegmentedControl *gSettingsLanguageSegment = nil;
 static NSSlider *gSettingsMenuWidthSlider = nil;
 static NSTextField *gSettingsMenuWidthValueLabel = nil;
 static NSSegmentedControl *gSettingsThemeSegment = nil;
@@ -132,6 +141,10 @@ static NSString *hotkeyNameForKeycode(CGKeyCode keycode);
 static void updateSettingsHotkeyButtonTitle(void);
 static void stopHotkeyCapture(void);
 static NSString *settingsMetaText(void);
+static NSString *effectiveRecognizerLocale(void);
+static void rebuildRecognizer(void);
+static NSString *uiText(NSString *fr, NSString *en);
+static void teardownSettingsWindow(void);
 
 @interface MenuHandler : NSObject
 @end
@@ -165,6 +178,14 @@ static NSString *settingsMetaText(void);
 	if (![b isKindOfClass:[NSButton class]]) return;
 	gAutoPasteEnabled = (b.state == NSControlStateValueOn);
 	[[NSUserDefaults standardUserDefaults] setBool:gAutoPasteEnabled forKey:@"autoPasteEnabled"];
+	updateMenuState();
+}
+- (void)settingsToggleFrenchLocale:(id)sender {
+	NSButton *b = (NSButton *)sender;
+	if (![b isKindOfClass:[NSButton class]]) return;
+	gForceFrenchLocale = (b.state == NSControlStateValueOn);
+	[[NSUserDefaults standardUserDefaults] setBool:gForceFrenchLocale forKey:@"forceFrenchLocale"];
+	rebuildRecognizer();
 	updateMenuState();
 }
 - (void)settingsChangeHotkey:(id)sender {
@@ -224,6 +245,21 @@ static NSString *settingsMetaText(void);
 	gStatusIconStyle = v;
 	[[NSUserDefaults standardUserDefaults] setInteger:gStatusIconStyle forKey:@"statusIconStyle"];
 	updateStatusItemIcon();
+	updateMenuState();
+}
+- (void)settingsLanguageChanged:(id)sender {
+	NSSegmentedControl *seg = (NSSegmentedControl *)sender;
+	if (![seg isKindOfClass:[NSSegmentedControl class]]) return;
+	NSInteger v = seg.selectedSegment;
+	if (v != PKTUILanguageFR && v != PKTUILanguageEN) return;
+	gUILanguage = v;
+	[[NSUserDefaults standardUserDefaults] setInteger:gUILanguage forKey:@"uiLanguage"];
+	if (gSettingsWindow) {
+		stopHotkeyCapture();
+		[gSettingsWindow close];
+		teardownSettingsWindow();
+		showSettingsWindow();
+	}
 	updateMenuState();
 }
 - (void)settingsPatternClicked:(id)sender {
@@ -455,6 +491,10 @@ static bool isHotKeyDownForFlags(NSEventModifierFlags flags) {
 	}
 }
 
+static NSString *uiText(NSString *fr, NSString *en) {
+	return (gUILanguage == PKTUILanguageEN) ? (en ?: fr ?: @"") : (fr ?: en ?: @"");
+}
+
 static NSString *hotkeyNameForKeycode(CGKeyCode keycode) {
 	switch (keycode) {
 	case (CGKeyCode)kVK_Function: return @"Fn";
@@ -527,10 +567,10 @@ static NSString *hotkeyNameForKeycode(CGKeyCode keycode) {
 static void updateSettingsHotkeyButtonTitle(void) {
 	if (!gSettingsHotkeyButton) return;
 	if (gIsCapturingHotkey) {
-		gSettingsHotkeyButton.title = @"Appuie sur une touche… (Esc annule)";
+		gSettingsHotkeyButton.title = uiText(@"Appuie sur une touche… (Esc annule)", @"Press a key… (Esc cancels)");
 		return;
 	}
-	gSettingsHotkeyButton.title = [NSString stringWithFormat:@"Maintenir %@", hotkeyNameForKeycode((CGKeyCode)gHotKeyCode)];
+	gSettingsHotkeyButton.title = [NSString stringWithFormat:@"%@ %@", uiText(@"Maintenir", @"Hold"), hotkeyNameForKeycode((CGKeyCode)gHotKeyCode)];
 }
 
 static void stopHotkeyCapture(void) {
@@ -784,7 +824,7 @@ static void ensureSpinnerTimer(void) {
 
 static void refreshSpinnerVisuals(void) {
 	if (gNotchLabel) {
-		gNotchLabel.stringValue = [NSString stringWithFormat:@"Recording · %@", spinnerPatternTitle()];
+		gNotchLabel.stringValue = [NSString stringWithFormat:@"%@ · %@", uiText(@"Enregistrement", @"Recording"), spinnerPatternTitle()];
 	}
 	syncSpinnerSettingsUI();
 	gSpinnerStartTime = CACurrentMediaTime();
@@ -860,7 +900,7 @@ static void ensureNotchWindow(void) {
 		[gNotchSpinner addSubview:d];
 	}
 
-	gNotchLabel = [NSTextField labelWithString:@"Recording"];
+	gNotchLabel = [NSTextField labelWithString:uiText(@"Enregistrement", @"Recording")];
 	gNotchLabel.translatesAutoresizingMaskIntoConstraints = NO;
 	gNotchLabel.font = [NSFont systemFontOfSize:11 weight:NSFontWeightSemibold];
 	gNotchLabel.textColor = [NSColor whiteColor];
@@ -900,10 +940,18 @@ static void updateMenuState(void) {
 	if (gSettingsAutoPasteCheckbox) gSettingsAutoPasteCheckbox.state = gAutoPasteEnabled ? NSControlStateValueOn : NSControlStateValueOff;
 	if (gSettingsMetaLabel) gSettingsMetaLabel.stringValue = settingsMetaText();
 	updateSettingsHotkeyButtonTitle();
+	if (gSettingsFrenchLocaleCheckbox) {
+		gSettingsFrenchLocaleCheckbox.state = gForceFrenchLocale ? NSControlStateValueOn : NSControlStateValueOff;
+		gSettingsFrenchLocaleCheckbox.enabled = !(gLocaleOverrideIdentifier && gLocaleOverrideIdentifier.length > 0);
+	}
+	if (gSettingsLanguageSegment) gSettingsLanguageSegment.selectedSegment = gUILanguage;
 	if (gSettingsMenuWidthSlider) gSettingsMenuWidthSlider.doubleValue = gMaxMenuTextWidth;
 	if (gSettingsMenuWidthValueLabel) gSettingsMenuWidthValueLabel.stringValue = [NSString stringWithFormat:@"%.0f px", gMaxMenuTextWidth];
 	if (gSettingsThemeSegment) gSettingsThemeSegment.selectedSegment = gGlassTheme;
 	if (gSettingsStatusIconSegment) gSettingsStatusIconSegment.selectedSegment = gStatusIconStyle;
+	if (gPopoverHistoryHeader) gPopoverHistoryHeader.stringValue = uiText(@"Historique", @"History");
+	if (gPopoverSettingsButton) gPopoverSettingsButton.title = uiText(@"Paramètres…", @"Settings…");
+	if (gPopoverQuitButton) gPopoverQuitButton.title = uiText(@"Quitter", @"Quit");
 	syncSpinnerSettingsUI();
 	if (gPopoverHotkeyLabel) gPopoverHotkeyLabel.stringValue = hotkeyTitle() ?: @"";
 
@@ -935,12 +983,33 @@ static void updateMenuState(void) {
 }
 
 static NSString *hotkeyTitle(void) {
-	return [NSString stringWithFormat:@"Raccourci : %@ (maintenir)", hotkeyNameForKeycode((CGKeyCode)gHotKeyCode)];
+	return [NSString stringWithFormat:@"%@ : %@ (%@)", uiText(@"Raccourci", @"Hotkey"), hotkeyNameForKeycode((CGKeyCode)gHotKeyCode), uiText(@"maintenir", @"hold")];
 }
 
 static NSString *settingsMetaText(void) {
 	NSString *locale = (gLocaleIdentifier && gLocaleIdentifier.length > 0) ? gLocaleIdentifier : @"system";
-	return [NSString stringWithFormat:@"%@\nLocale : %@", hotkeyTitle(), locale];
+	return [NSString stringWithFormat:@"%@\n%@ : %@", hotkeyTitle(), uiText(@"Locale", @"Locale"), locale];
+}
+
+static NSString *effectiveRecognizerLocale(void) {
+	if (gLocaleOverrideIdentifier && gLocaleOverrideIdentifier.length > 0) return gLocaleOverrideIdentifier;
+	if (gForceFrenchLocale) return @"fr-FR";
+	return @"";
+}
+
+static void rebuildRecognizer(void) {
+	if (gIsRecording) stopRecording();
+	if (gTask) {
+		[gTask cancel];
+		gTask = nil;
+	}
+	NSString *loc = effectiveRecognizerLocale();
+	gLocaleIdentifier = (loc && loc.length > 0) ? loc : @"system";
+	if (loc && loc.length > 0) {
+		gRecognizer = [[SFSpeechRecognizer alloc] initWithLocale:[NSLocale localeWithLocaleIdentifier:loc]];
+	} else {
+		gRecognizer = [[SFSpeechRecognizer alloc] init];
+	}
 }
 
 static void applyGlassTheme(void) {
@@ -996,7 +1065,7 @@ static void ensurePopover(void) {
 	gPopoverHotkeyLabel.alignment = NSTextAlignmentLeft;
 	gPopoverHotkeyLabel.translatesAutoresizingMaskIntoConstraints = NO;
 
-	gPopoverSettingsButton = [NSButton buttonWithTitle:@"Settings…" target:gMenuHandler action:@selector(popoverOpenSettings:)];
+	gPopoverSettingsButton = [NSButton buttonWithTitle:uiText(@"Paramètres…", @"Settings…") target:gMenuHandler action:@selector(popoverOpenSettings:)];
 	gPopoverSettingsButton.bordered = YES;
 	gPopoverSettingsButton.bezelStyle = NSBezelStyleTexturedRounded;
 	gPopoverSettingsButton.alignment = NSTextAlignmentLeft;
@@ -1007,7 +1076,7 @@ static void ensurePopover(void) {
 	sep1.boxType = NSBoxSeparator;
 	sep1.translatesAutoresizingMaskIntoConstraints = NO;
 
-	gPopoverHistoryHeader = [NSTextField labelWithString:@"Historique"];
+	gPopoverHistoryHeader = [NSTextField labelWithString:uiText(@"Historique", @"History")];
 	gPopoverHistoryHeader.font = [NSFont boldSystemFontOfSize:12];
 	gPopoverHistoryHeader.alignment = NSTextAlignmentLeft;
 	gPopoverHistoryHeader.translatesAutoresizingMaskIntoConstraints = NO;
@@ -1034,7 +1103,7 @@ static void ensurePopover(void) {
 	sep2.boxType = NSBoxSeparator;
 	sep2.translatesAutoresizingMaskIntoConstraints = NO;
 
-	gPopoverQuitButton = [NSButton buttonWithTitle:@"Quitter" target:gMenuHandler action:@selector(popoverQuit:)];
+	gPopoverQuitButton = [NSButton buttonWithTitle:uiText(@"Quitter", @"Quit") target:gMenuHandler action:@selector(popoverQuit:)];
 	gPopoverQuitButton.bordered = YES;
 	gPopoverQuitButton.bezelStyle = NSBezelStyleTexturedRounded;
 	gPopoverQuitButton.alignment = NSTextAlignmentLeft;
@@ -1077,7 +1146,7 @@ static void ensurePopover(void) {
 		[gPopoverStack.topAnchor constraintEqualToAnchor:content.topAnchor constant:14],
 		[gPopoverStack.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:14],
 		[gPopoverStack.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-14],
-		[gPopoverStack.bottomAnchor constraintLessThanOrEqualToAnchor:content.bottomAnchor constant:-14],
+		[gPopoverStack.bottomAnchor constraintEqualToAnchor:content.bottomAnchor constant:-14],
 
 		[bottomRow.leadingAnchor constraintEqualToAnchor:gPopoverStack.leadingAnchor],
 		[bottomRow.trailingAnchor constraintEqualToAnchor:gPopoverStack.trailingAnchor],
@@ -1107,6 +1176,31 @@ static void togglePopover(void) {
 	[gPopover showRelativeToRect:gStatusItem.button.bounds ofView:gStatusItem.button preferredEdge:NSRectEdgeMinY];
 }
 
+static void teardownSettingsWindow(void) {
+	gSettingsWindow = nil;
+	gSettingsBackground = nil;
+	gSettingsContent = nil;
+	gSettingsMetaLabel = nil;
+	gSettingsAutoPasteCheckbox = nil;
+	gSettingsFrenchLocaleCheckbox = nil;
+	gSettingsHotkeyButton = nil;
+	gSettingsLanguageSegment = nil;
+	gSettingsMenuWidthSlider = nil;
+	gSettingsMenuWidthValueLabel = nil;
+	gSettingsThemeSegment = nil;
+	gSettingsStatusIconSegment = nil;
+	gSettingsPatternGrid = nil;
+	gSettingsPreviewBackground = nil;
+	gSettingsPreviewSpinner = nil;
+	for (NSInteger i = 0; i < 7; i++) {
+		gSettingsPatternButtons[i] = nil;
+		gSettingsPatternButtonSpinners[i] = nil;
+		for (NSInteger j = 0; j < 9; j++) gSettingsPatternButtonDots[i][j] = nil;
+	}
+	for (NSInteger i = 0; i < 6; i++) gSettingsColorButtons[i] = nil;
+	for (NSInteger i = 0; i < 9; i++) gSettingsPreviewDots[i] = nil;
+}
+
 static void showSettingsWindow(void) {
 	if (gSettingsWindow) {
 		updateMenuState();
@@ -1122,7 +1216,7 @@ static void showSettingsWindow(void) {
 	NSRect frame = NSMakeRect(0, 0, 520, 690);
 	NSWindowStyleMask style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable;
 	gSettingsWindow = [[NSWindow alloc] initWithContentRect:frame styleMask:style backing:NSBackingStoreBuffered defer:NO];
-	gSettingsWindow.title = @"PKvoice — Settings";
+	gSettingsWindow.title = [NSString stringWithFormat:@"PKvoice — %@", uiText(@"Paramètres", @"Settings")];
 	gSettingsWindow.releasedWhenClosed = NO;
 
 	gSettingsBackground = [NSVisualEffectView new];
@@ -1142,7 +1236,7 @@ static void showSettingsWindow(void) {
 
 	NSView *content = gSettingsContent;
 
-	NSTextField *title = [NSTextField labelWithString:@"Paramètres"];
+	NSTextField *title = [NSTextField labelWithString:uiText(@"Paramètres", @"Settings")];
 	title.font = [NSFont boldSystemFontOfSize:18];
 	title.translatesAutoresizingMaskIntoConstraints = NO;
 	[content addSubview:title];
@@ -1155,17 +1249,21 @@ static void showSettingsWindow(void) {
 	gSettingsMetaLabel.translatesAutoresizingMaskIntoConstraints = NO;
 	[content addSubview:gSettingsMetaLabel];
 
-	NSTextField *transcriptionSectionLabel = [NSTextField labelWithString:@"Transcription"];
+	NSTextField *transcriptionSectionLabel = [NSTextField labelWithString:uiText(@"Transcription", @"Transcription")];
 	transcriptionSectionLabel.font = [NSFont boldSystemFontOfSize:13];
 	transcriptionSectionLabel.translatesAutoresizingMaskIntoConstraints = NO;
 	[content addSubview:transcriptionSectionLabel];
 
-	gSettingsAutoPasteCheckbox = [NSButton checkboxWithTitle:@"Auto-paste (Cmd+V) après relâchement" target:gMenuHandler action:@selector(settingsToggleAutoPaste:)];
-	gSettingsAutoPasteCheckbox.state = gAutoPasteEnabled ? NSControlStateValueOn : NSControlStateValueOff;
-	gSettingsAutoPasteCheckbox.translatesAutoresizingMaskIntoConstraints = NO;
-	[content addSubview:gSettingsAutoPasteCheckbox];
+	NSTextField *uiLangLabel = [NSTextField labelWithString:uiText(@"Langue interface", @"Interface language")];
+	uiLangLabel.translatesAutoresizingMaskIntoConstraints = NO;
+	[content addSubview:uiLangLabel];
 
-	NSTextField *hotkeyLabel = [NSTextField labelWithString:@"Raccourci"];
+	gSettingsLanguageSegment = [NSSegmentedControl segmentedControlWithLabels:@[ @"FR", @"ENG" ] trackingMode:NSSegmentSwitchTrackingSelectOne target:gMenuHandler action:@selector(settingsLanguageChanged:)];
+	gSettingsLanguageSegment.selectedSegment = gUILanguage;
+	gSettingsLanguageSegment.translatesAutoresizingMaskIntoConstraints = NO;
+	[content addSubview:gSettingsLanguageSegment];
+
+	NSTextField *hotkeyLabel = [NSTextField labelWithString:uiText(@"Raccourci", @"Hotkey")];
 	hotkeyLabel.translatesAutoresizingMaskIntoConstraints = NO;
 	[content addSubview:hotkeyLabel];
 
@@ -1175,29 +1273,39 @@ static void showSettingsWindow(void) {
 	[content addSubview:gSettingsHotkeyButton];
 	updateSettingsHotkeyButtonTitle();
 
-	NSTextField *modelSectionLabel = [NSTextField labelWithString:@"Model & Traduction"];
+	gSettingsFrenchLocaleCheckbox = [NSButton checkboxWithTitle:uiText(@"Maintenir locale FR-FR", @"Keep locale FR-FR") target:gMenuHandler action:@selector(settingsToggleFrenchLocale:)];
+	gSettingsFrenchLocaleCheckbox.state = gForceFrenchLocale ? NSControlStateValueOn : NSControlStateValueOff;
+	gSettingsFrenchLocaleCheckbox.translatesAutoresizingMaskIntoConstraints = NO;
+	[content addSubview:gSettingsFrenchLocaleCheckbox];
+
+	gSettingsAutoPasteCheckbox = [NSButton checkboxWithTitle:uiText(@"Auto-paste (Cmd+V) après relâchement", @"Auto-paste (Cmd+V) on release") target:gMenuHandler action:@selector(settingsToggleAutoPaste:)];
+	gSettingsAutoPasteCheckbox.state = gAutoPasteEnabled ? NSControlStateValueOn : NSControlStateValueOff;
+	gSettingsAutoPasteCheckbox.translatesAutoresizingMaskIntoConstraints = NO;
+	[content addSubview:gSettingsAutoPasteCheckbox];
+
+	NSTextField *modelSectionLabel = [NSTextField labelWithString:uiText(@"Modèle & Traduction", @"Model & Translation")];
 	modelSectionLabel.font = [NSFont boldSystemFontOfSize:13];
 	modelSectionLabel.translatesAutoresizingMaskIntoConstraints = NO;
 	[content addSubview:modelSectionLabel];
 
-	NSTextField *modelValueLabel = [NSTextField labelWithString:@"Model actuel : Apple Speech (macOS)"];
+	NSTextField *modelValueLabel = [NSTextField labelWithString:uiText(@"Modèle actuel : Apple Speech (macOS)", @"Current model: Apple Speech (macOS)")];
 	modelValueLabel.font = [NSFont systemFontOfSize:12];
 	modelValueLabel.textColor = [NSColor secondaryLabelColor];
 	modelValueLabel.translatesAutoresizingMaskIntoConstraints = NO;
 	[content addSubview:modelValueLabel];
 
-	NSTextField *translationValueLabel = [NSTextField labelWithString:@"Traduction : désactivée (bientôt configurable)"];
+	NSTextField *translationValueLabel = [NSTextField labelWithString:uiText(@"Traduction : désactivée (bientôt configurable)", @"Translation: disabled (configurable soon)")];
 	translationValueLabel.font = [NSFont systemFontOfSize:12];
 	translationValueLabel.textColor = [NSColor secondaryLabelColor];
 	translationValueLabel.translatesAutoresizingMaskIntoConstraints = NO;
 	[content addSubview:translationValueLabel];
 
-	NSTextField *menuSectionLabel = [NSTextField labelWithString:@"Menu"];
+	NSTextField *menuSectionLabel = [NSTextField labelWithString:uiText(@"Menu", @"Menu")];
 	menuSectionLabel.font = [NSFont boldSystemFontOfSize:13];
 	menuSectionLabel.translatesAutoresizingMaskIntoConstraints = NO;
 	[content addSubview:menuSectionLabel];
 
-	NSTextField *widthLabel = [NSTextField labelWithString:@"Largeur max (menu historique)"];
+	NSTextField *widthLabel = [NSTextField labelWithString:uiText(@"Largeur max (menu historique)", @"Max width (history menu)")];
 	widthLabel.translatesAutoresizingMaskIntoConstraints = NO;
 	[content addSubview:widthLabel];
 
@@ -1210,11 +1318,11 @@ static void showSettingsWindow(void) {
 	gSettingsMenuWidthSlider.translatesAutoresizingMaskIntoConstraints = NO;
 	[content addSubview:gSettingsMenuWidthSlider];
 
-	NSTextField *themeLabel = [NSTextField labelWithString:@"Style du menu"];
+	NSTextField *themeLabel = [NSTextField labelWithString:uiText(@"Style du menu", @"Menu style")];
 	themeLabel.translatesAutoresizingMaskIntoConstraints = NO;
 	[content addSubview:themeLabel];
 
-	gSettingsThemeSegment = [NSSegmentedControl segmentedControlWithLabels:@[ @"Light", @"Dark" ] trackingMode:NSSegmentSwitchTrackingSelectOne target:gMenuHandler action:@selector(settingsThemeChanged:)];
+	gSettingsThemeSegment = [NSSegmentedControl segmentedControlWithLabels:@[ uiText(@"Clair", @"Light"), uiText(@"Sombre", @"Dark") ] trackingMode:NSSegmentSwitchTrackingSelectOne target:gMenuHandler action:@selector(settingsThemeChanged:)];
 	gSettingsThemeSegment.selectedSegment = gGlassTheme;
 	if (@available(macOS 11.0, *)) {
 		NSImage *sun = [NSImage imageWithSystemSymbolName:@"sun.max" accessibilityDescription:@"Light"];
@@ -1229,11 +1337,11 @@ static void showSettingsWindow(void) {
 	gSettingsThemeSegment.translatesAutoresizingMaskIntoConstraints = NO;
 	[content addSubview:gSettingsThemeSegment];
 
-	NSTextField *iconLabel = [NSTextField labelWithString:@"Icône menubar"];
+	NSTextField *iconLabel = [NSTextField labelWithString:uiText(@"Icône menubar", @"Menubar icon")];
 	iconLabel.translatesAutoresizingMaskIntoConstraints = NO;
 	[content addSubview:iconLabel];
 
-	gSettingsStatusIconSegment = [NSSegmentedControl segmentedControlWithLabels:@[ @"Wave", @"Micro" ] trackingMode:NSSegmentSwitchTrackingSelectOne target:gMenuHandler action:@selector(settingsStatusIconChanged:)];
+	gSettingsStatusIconSegment = [NSSegmentedControl segmentedControlWithLabels:@[ uiText(@"Wave", @"Wave"), uiText(@"Micro", @"Micro") ] trackingMode:NSSegmentSwitchTrackingSelectOne target:gMenuHandler action:@selector(settingsStatusIconChanged:)];
 	gSettingsStatusIconSegment.selectedSegment = gStatusIconStyle;
 	if (@available(macOS 11.0, *)) {
 		NSImage *waveIcon = [NSImage imageWithSystemSymbolName:@"waveform" accessibilityDescription:@"Wave"];
@@ -1256,12 +1364,12 @@ static void showSettingsWindow(void) {
 	gSettingsStatusIconSegment.translatesAutoresizingMaskIntoConstraints = NO;
 	[content addSubview:gSettingsStatusIconSegment];
 
-	NSTextField *notchLabel = [NSTextField labelWithString:@"Notch Animation"];
+	NSTextField *notchLabel = [NSTextField labelWithString:uiText(@"Animation du notch", @"Notch Animation")];
 	notchLabel.font = [NSFont boldSystemFontOfSize:13];
 	notchLabel.translatesAutoresizingMaskIntoConstraints = NO;
 	[content addSubview:notchLabel];
 
-	NSTextField *patternLabel = [NSTextField labelWithString:@"Animation"];
+	NSTextField *patternLabel = [NSTextField labelWithString:uiText(@"Animation", @"Animation")];
 	patternLabel.translatesAutoresizingMaskIntoConstraints = NO;
 	[content addSubview:patternLabel];
 
@@ -1311,7 +1419,7 @@ static void showSettingsWindow(void) {
 		}
 	}
 
-	NSTextField *colorLabel = [NSTextField labelWithString:@"Couleur"];
+	NSTextField *colorLabel = [NSTextField labelWithString:uiText(@"Couleur", @"Color")];
 	colorLabel.translatesAutoresizingMaskIntoConstraints = NO;
 	[content addSubview:colorLabel];
 
@@ -1336,7 +1444,7 @@ static void showSettingsWindow(void) {
 		[swatchRow addSubview:b];
 	}
 
-	NSTextField *previewLabel = [NSTextField labelWithString:@"Prévisualisation"];
+	NSTextField *previewLabel = [NSTextField labelWithString:uiText(@"Prévisualisation", @"Preview")];
 	previewLabel.translatesAutoresizingMaskIntoConstraints = NO;
 	[content addSubview:previewLabel];
 
@@ -1350,13 +1458,13 @@ static void showSettingsWindow(void) {
 	gSettingsPreviewBackground.layer.borderWidth = 1.0;
 	[content addSubview:gSettingsPreviewBackground];
 
-	NSTextField *previewHint = [NSTextField labelWithString:@"FN: le notch animé apparaît pendant l'appui."];
+	NSTextField *previewHint = [NSTextField labelWithString:uiText(@"FN : le notch animé apparaît pendant l'appui.", @"FN: animated notch appears while pressed.")];
 	previewHint.translatesAutoresizingMaskIntoConstraints = NO;
 	previewHint.font = [NSFont systemFontOfSize:11];
 	previewHint.textColor = [NSColor colorWithCalibratedWhite:1.0 alpha:0.9];
 	[gSettingsPreviewBackground addSubview:previewHint];
 
-	NSTextField *versionFootnote = [NSTextField labelWithString:[NSString stringWithFormat:@"Version %@", appVersion]];
+	NSTextField *versionFootnote = [NSTextField labelWithString:[NSString stringWithFormat:@"%@ %@", uiText(@"Version", @"Version"), appVersion]];
 	versionFootnote.translatesAutoresizingMaskIntoConstraints = NO;
 	versionFootnote.font = [NSFont systemFontOfSize:11];
 	versionFootnote.textColor = [NSColor tertiaryLabelColor];
@@ -1393,14 +1501,25 @@ static void showSettingsWindow(void) {
 		[transcriptionSectionLabel.topAnchor constraintEqualToAnchor:gSettingsMetaLabel.bottomAnchor constant:16],
 		[transcriptionSectionLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
 
-		[hotkeyLabel.topAnchor constraintEqualToAnchor:transcriptionSectionLabel.bottomAnchor constant:10],
+		[uiLangLabel.topAnchor constraintEqualToAnchor:transcriptionSectionLabel.bottomAnchor constant:10],
+		[uiLangLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
+
+		[gSettingsLanguageSegment.centerYAnchor constraintEqualToAnchor:uiLangLabel.centerYAnchor],
+		[gSettingsLanguageSegment.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
+		[gSettingsLanguageSegment.widthAnchor constraintEqualToConstant:120],
+
+		[hotkeyLabel.topAnchor constraintEqualToAnchor:uiLangLabel.bottomAnchor constant:10],
 		[hotkeyLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
 
 		[gSettingsHotkeyButton.centerYAnchor constraintEqualToAnchor:hotkeyLabel.centerYAnchor],
 		[gSettingsHotkeyButton.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
 		[gSettingsHotkeyButton.widthAnchor constraintGreaterThanOrEqualToConstant:220],
 
-		[gSettingsAutoPasteCheckbox.topAnchor constraintEqualToAnchor:hotkeyLabel.bottomAnchor constant:10],
+		[gSettingsFrenchLocaleCheckbox.topAnchor constraintEqualToAnchor:hotkeyLabel.bottomAnchor constant:10],
+		[gSettingsFrenchLocaleCheckbox.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
+		[gSettingsFrenchLocaleCheckbox.trailingAnchor constraintLessThanOrEqualToAnchor:content.trailingAnchor constant:-18],
+
+		[gSettingsAutoPasteCheckbox.topAnchor constraintEqualToAnchor:gSettingsFrenchLocaleCheckbox.bottomAnchor constant:10],
 		[gSettingsAutoPasteCheckbox.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
 		[gSettingsAutoPasteCheckbox.trailingAnchor constraintLessThanOrEqualToAnchor:content.trailingAnchor constant:-18],
 
@@ -1665,6 +1784,13 @@ static void runApp(const char *localeCString) {
 		if ([defaults objectForKey:@"autoPasteEnabled"] != nil) {
 			gAutoPasteEnabled = [defaults boolForKey:@"autoPasteEnabled"];
 		}
+		if ([defaults objectForKey:@"forceFrenchLocale"] != nil) {
+			gForceFrenchLocale = [defaults boolForKey:@"forceFrenchLocale"];
+		}
+		if ([defaults objectForKey:@"uiLanguage"] != nil) {
+			NSInteger lang = [defaults integerForKey:@"uiLanguage"];
+			if (lang == PKTUILanguageFR || lang == PKTUILanguageEN) gUILanguage = lang;
+		}
 		if ([defaults objectForKey:@"hotKeyCode"] != nil) {
 			NSInteger hk = [defaults integerForKey:@"hotKeyCode"];
 			if (hk >= 0 && hk <= 0x7F) gHotKeyCode = (uint16_t)hk;
@@ -1690,12 +1816,8 @@ static void runApp(const char *localeCString) {
 		if (localeCString && strlen(localeCString) > 0) {
 			locale = [NSString stringWithUTF8String:localeCString];
 		}
-		gLocaleIdentifier = locale ?: @"";
-		if (locale) {
-			gRecognizer = [[SFSpeechRecognizer alloc] initWithLocale:[NSLocale localeWithLocaleIdentifier:locale]];
-		} else {
-			gRecognizer = [[SFSpeechRecognizer alloc] init];
-		}
+		gLocaleOverrideIdentifier = locale ?: @"";
+		rebuildRecognizer();
 
 		setupStatusBar();
 		updateStatusItemTitle();
