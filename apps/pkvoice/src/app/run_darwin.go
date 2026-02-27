@@ -19,6 +19,9 @@ static bool gIsRecording = false;
 static bool gPasteWhenFinal = false;
 static bool gAutoPasteEnabled = true;
 static bool gCopyWhenFinal = false;
+static BOOL gAICleanupEnabled = NO;
+static NSString *gAICleanupModel = @"gpt-4o-mini";
+static NSString *gAIApiKey = @"";
 
 static SFSpeechRecognizer *gRecognizer = nil;
 static SFSpeechAudioBufferRecognitionRequest *gRequest = nil;
@@ -92,6 +95,9 @@ static NSButton *gSettingsAutoPasteCheckbox = nil;
 static NSButton *gSettingsFrenchLocaleCheckbox = nil;
 static NSButton *gSettingsHotkeyButton = nil;
 static NSSegmentedControl *gSettingsLanguageSegment = nil;
+static NSButton *gSettingsAICleanupCheckbox = nil;
+static NSTextField *gSettingsAIModelField = nil;
+static NSSecureTextField *gSettingsAIApiKeyField = nil;
 static NSSlider *gSettingsMenuWidthSlider = nil;
 static NSTextField *gSettingsMenuWidthValueLabel = nil;
 static NSSegmentedControl *gSettingsThemeSegment = nil;
@@ -144,6 +150,8 @@ static void rebuildRecognizer(void);
 static NSString *uiText(NSString *fr, NSString *en);
 static void teardownSettingsWindow(void);
 static void updateNotchLabel(void);
+static void cleanTranscriptWithAIIfNeeded(NSString *text, void (^completion)(NSString *outText));
+static void maybeProcessFinalTranscript(NSString *rawText, BOOL shouldPaste, BOOL shouldCopy);
 
 @interface MenuHandler : NSObject
 @end
@@ -185,6 +193,25 @@ static void updateNotchLabel(void);
 	gForceFrenchLocale = (b.state == NSControlStateValueOn);
 	[[NSUserDefaults standardUserDefaults] setBool:gForceFrenchLocale forKey:@"forceFrenchLocale"];
 	rebuildRecognizer();
+	updateMenuState();
+}
+- (void)settingsToggleAICleanup:(id)sender {
+	NSButton *b = (NSButton *)sender;
+	if (![b isKindOfClass:[NSButton class]]) return;
+	gAICleanupEnabled = (b.state == NSControlStateValueOn);
+	[[NSUserDefaults standardUserDefaults] setBool:gAICleanupEnabled forKey:@"aiCleanupEnabled"];
+	updateMenuState();
+}
+- (void)settingsSaveAIConfig:(id)sender {
+	(void)sender;
+	NSString *model = gSettingsAIModelField ? [gSettingsAIModelField.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] : @"";
+	if (model.length == 0) model = @"gpt-4o-mini";
+	gAICleanupModel = model;
+	[[NSUserDefaults standardUserDefaults] setObject:gAICleanupModel forKey:@"aiCleanupModel"];
+
+	NSString *apiKey = gSettingsAIApiKeyField ? [gSettingsAIApiKeyField.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] : @"";
+	gAIApiKey = apiKey ?: @"";
+	[[NSUserDefaults standardUserDefaults] setObject:gAIApiKey forKey:@"aiApiKey"];
 	updateMenuState();
 }
 - (void)settingsChangeHotkey:(id)sender {
@@ -952,6 +979,9 @@ static void updateMenuState(void) {
 		gSettingsFrenchLocaleCheckbox.enabled = !(gLocaleOverrideIdentifier && gLocaleOverrideIdentifier.length > 0);
 	}
 	if (gSettingsLanguageSegment) gSettingsLanguageSegment.selectedSegment = gUILanguage;
+	if (gSettingsAICleanupCheckbox) gSettingsAICleanupCheckbox.state = gAICleanupEnabled ? NSControlStateValueOn : NSControlStateValueOff;
+	if (gSettingsAIModelField) gSettingsAIModelField.stringValue = gAICleanupModel ?: @"gpt-4o-mini";
+	if (gSettingsAIApiKeyField) gSettingsAIApiKeyField.stringValue = gAIApiKey ?: @"";
 	if (gSettingsMenuWidthSlider) gSettingsMenuWidthSlider.doubleValue = gMaxMenuTextWidth;
 	if (gSettingsMenuWidthValueLabel) gSettingsMenuWidthValueLabel.stringValue = [NSString stringWithFormat:@"%.0f px", gMaxMenuTextWidth];
 	if (gSettingsThemeSegment) gSettingsThemeSegment.selectedSegment = gGlassTheme;
@@ -1012,6 +1042,136 @@ static void rebuildRecognizer(void) {
 	} else {
 		gRecognizer = [[SFSpeechRecognizer alloc] init];
 	}
+}
+
+static NSString *effectiveAIApiKey(void) {
+	NSString *k = [gAIApiKey stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+	if (k.length > 0) return k;
+	NSDictionary<NSString *, NSString *> *env = [[NSProcessInfo processInfo] environment];
+	NSString *envKey = env[@"PKVOICE_OPENAI_API_KEY"];
+	if (!envKey || envKey.length == 0) envKey = env[@"OPENAI_API_KEY"];
+	return envKey ?: @"";
+}
+
+static NSString *effectiveAIModel(void) {
+	NSString *m = [gAICleanupModel stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+	if (!m || m.length == 0) return @"gpt-4o-mini";
+	return m;
+}
+
+static NSString *sanitizedAIText(NSString *s, NSString *fallback) {
+	NSString *out = [s stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+	if (!out || out.length == 0) return fallback ?: @"";
+	return out;
+}
+
+static void cleanTranscriptWithAIIfNeeded(NSString *text, void (^completion)(NSString *outText)) {
+	NSString *raw = [text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+	if (raw.length == 0) {
+		if (completion) completion(@"");
+		return;
+	}
+	if (!gAICleanupEnabled) {
+		if (completion) completion(raw);
+		return;
+	}
+	NSString *apiKey = effectiveAIApiKey();
+	if (apiKey.length == 0) {
+		if (completion) completion(raw);
+		return;
+	}
+	NSString *model = effectiveAIModel();
+
+	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+		@autoreleasepool {
+			NSURL *url = [NSURL URLWithString:@"https://api.openai.com/v1/chat/completions"];
+			if (!url) {
+				dispatch_async(dispatch_get_main_queue(), ^{ if (completion) completion(raw); });
+				return;
+			}
+
+			NSDictionary *payload = @{
+				@"model": model,
+				@"temperature": @0.1,
+				@"messages": @[
+					@{
+						@"role": @"system",
+						@"content": @"Tu nettoies une transcription vocale en francais. Supprime les hesitations (euh, hum), repetitions, faux departs et coupures, tout en gardant strictement le sens et les informations. Ne rajoute rien."
+					},
+					@{
+						@"role": @"user",
+						@"content": raw
+					}
+				]
+			};
+			NSError *jsonErr = nil;
+			NSData *body = [NSJSONSerialization dataWithJSONObject:payload options:0 error:&jsonErr];
+			if (!body || jsonErr) {
+				dispatch_async(dispatch_get_main_queue(), ^{ if (completion) completion(raw); });
+				return;
+			}
+
+			NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url];
+			req.HTTPMethod = @"POST";
+			req.timeoutInterval = 15.0;
+			[req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+			[req setValue:[NSString stringWithFormat:@"Bearer %@", apiKey] forHTTPHeaderField:@"Authorization"];
+			req.HTTPBody = body;
+
+			dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+			__block NSData *respData = nil;
+			__block NSError *respErr = nil;
+			NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+				(void)response;
+				respData = data;
+				respErr = error;
+				dispatch_semaphore_signal(sem);
+			}];
+			[task resume];
+			dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(16 * NSEC_PER_SEC)));
+
+			if (respErr || !respData) {
+				dispatch_async(dispatch_get_main_queue(), ^{ if (completion) completion(raw); });
+				return;
+			}
+
+			NSError *parseErr = nil;
+			id json = [NSJSONSerialization JSONObjectWithData:respData options:0 error:&parseErr];
+			NSString *out = raw;
+			if (!parseErr && [json isKindOfClass:[NSDictionary class]]) {
+				NSArray *choices = ((NSDictionary *)json)[@"choices"];
+				if ([choices isKindOfClass:[NSArray class]] && choices.count > 0) {
+					NSDictionary *choice = choices[0];
+					if ([choice isKindOfClass:[NSDictionary class]]) {
+						NSDictionary *msg = choice[@"message"];
+						if ([msg isKindOfClass:[NSDictionary class]]) {
+							NSString *content = msg[@"content"];
+							if ([content isKindOfClass:[NSString class]]) out = sanitizedAIText(content, raw);
+						}
+					}
+				}
+			}
+			dispatch_async(dispatch_get_main_queue(), ^{
+				if (completion) completion(out ?: raw);
+			});
+		}
+	});
+}
+
+static void maybeProcessFinalTranscript(NSString *rawText, BOOL shouldPaste, BOOL shouldCopy) {
+	NSString *base = [rawText stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+	if (base.length == 0) return;
+	cleanTranscriptWithAIIfNeeded(base, ^(NSString *outText) {
+		NSString *final = sanitizedAIText(outText, base);
+		gLatestTranscript = final;
+		addTranscriptToHistory(final);
+		updateMenuState();
+		if (shouldPaste) {
+			copyAndMaybePasteText(final, true);
+		} else if (shouldCopy) {
+			copyAndMaybePasteText(final, false);
+		}
+	});
 }
 
 static void applyGlassTheme(void) {
@@ -1186,6 +1346,9 @@ static void teardownSettingsWindow(void) {
 	gSettingsFrenchLocaleCheckbox = nil;
 	gSettingsHotkeyButton = nil;
 	gSettingsLanguageSegment = nil;
+	gSettingsAICleanupCheckbox = nil;
+	gSettingsAIModelField = nil;
+	gSettingsAIApiKeyField = nil;
 	gSettingsMenuWidthSlider = nil;
 	gSettingsMenuWidthValueLabel = nil;
 	gSettingsThemeSegment = nil;
@@ -1214,7 +1377,7 @@ static void showSettingsWindow(void) {
 		return;
 	}
 
-	NSRect frame = NSMakeRect(0, 0, 520, 690);
+	NSRect frame = NSMakeRect(0, 0, 520, 760);
 	NSWindowStyleMask style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable;
 	gSettingsWindow = [[NSWindow alloc] initWithContentRect:frame styleMask:style backing:NSBackingStoreBuffered defer:NO];
 	gSettingsWindow.title = [NSString stringWithFormat:@"PKvoice — %@", uiText(@"Paramètres", @"Settings")];
@@ -1277,18 +1440,42 @@ static void showSettingsWindow(void) {
 	gSettingsAutoPasteCheckbox.translatesAutoresizingMaskIntoConstraints = NO;
 	[content addSubview:gSettingsAutoPasteCheckbox];
 
-	NSTextField *modelSectionLabel = [NSTextField labelWithString:uiText(@"Modèle & Traduction", @"Model & Translation")];
+	NSTextField *modelSectionLabel = [NSTextField labelWithString:uiText(@"IA Texte", @"Text AI")];
 	modelSectionLabel.font = [NSFont boldSystemFontOfSize:13];
 	modelSectionLabel.translatesAutoresizingMaskIntoConstraints = NO;
 	[content addSubview:modelSectionLabel];
 
-	NSTextField *modelValueLabel = [NSTextField labelWithString:uiText(@"Modèle actuel : Apple Speech (macOS)", @"Current model: Apple Speech (macOS)")];
-	modelValueLabel.font = [NSFont systemFontOfSize:12];
-	modelValueLabel.textColor = [NSColor secondaryLabelColor];
-	modelValueLabel.translatesAutoresizingMaskIntoConstraints = NO;
-	[content addSubview:modelValueLabel];
+	gSettingsAICleanupCheckbox = [NSButton checkboxWithTitle:uiText(@"Activer le nettoyage IA de la transcription", @"Enable AI transcript cleanup") target:gMenuHandler action:@selector(settingsToggleAICleanup:)];
+	gSettingsAICleanupCheckbox.state = gAICleanupEnabled ? NSControlStateValueOn : NSControlStateValueOff;
+	gSettingsAICleanupCheckbox.translatesAutoresizingMaskIntoConstraints = NO;
+	[content addSubview:gSettingsAICleanupCheckbox];
 
-	NSTextField *translationValueLabel = [NSTextField labelWithString:uiText(@"Traduction : désactivée (bientôt configurable)", @"Translation: disabled (configurable soon)")];
+	NSTextField *aiModelLabel = [NSTextField labelWithString:uiText(@"Modèle", @"Model")];
+	aiModelLabel.translatesAutoresizingMaskIntoConstraints = NO;
+	[content addSubview:aiModelLabel];
+
+	gSettingsAIModelField = [NSTextField new];
+	gSettingsAIModelField.translatesAutoresizingMaskIntoConstraints = NO;
+	gSettingsAIModelField.placeholderString = @"gpt-4o-mini";
+	gSettingsAIModelField.stringValue = gAICleanupModel ?: @"gpt-4o-mini";
+	[content addSubview:gSettingsAIModelField];
+
+	NSTextField *aiApiKeyLabel = [NSTextField labelWithString:uiText(@"Clé API OpenAI", @"OpenAI API key")];
+	aiApiKeyLabel.translatesAutoresizingMaskIntoConstraints = NO;
+	[content addSubview:aiApiKeyLabel];
+
+	gSettingsAIApiKeyField = [NSSecureTextField new];
+	gSettingsAIApiKeyField.translatesAutoresizingMaskIntoConstraints = NO;
+	gSettingsAIApiKeyField.placeholderString = @"sk-...";
+	gSettingsAIApiKeyField.stringValue = gAIApiKey ?: @"";
+	[content addSubview:gSettingsAIApiKeyField];
+
+	NSButton *aiSaveButton = [NSButton buttonWithTitle:uiText(@"Enregistrer IA", @"Save AI") target:gMenuHandler action:@selector(settingsSaveAIConfig:)];
+	aiSaveButton.translatesAutoresizingMaskIntoConstraints = NO;
+	aiSaveButton.bezelStyle = NSBezelStyleRounded;
+	[content addSubview:aiSaveButton];
+
+	NSTextField *translationValueLabel = [NSTextField labelWithString:uiText(@"Traduction : désactivée (à venir)", @"Translation: disabled (coming soon)")];
 	translationValueLabel.font = [NSFont systemFontOfSize:12];
 	translationValueLabel.textColor = [NSColor secondaryLabelColor];
 	translationValueLabel.translatesAutoresizingMaskIntoConstraints = NO;
@@ -1516,11 +1703,28 @@ static void showSettingsWindow(void) {
 		[modelSectionLabel.topAnchor constraintEqualToAnchor:gSettingsAutoPasteCheckbox.bottomAnchor constant:18],
 		[modelSectionLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
 
-		[modelValueLabel.topAnchor constraintEqualToAnchor:modelSectionLabel.bottomAnchor constant:8],
-		[modelValueLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
-		[modelValueLabel.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
+		[gSettingsAICleanupCheckbox.topAnchor constraintEqualToAnchor:modelSectionLabel.bottomAnchor constant:8],
+		[gSettingsAICleanupCheckbox.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
+		[gSettingsAICleanupCheckbox.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
 
-		[translationValueLabel.topAnchor constraintEqualToAnchor:modelValueLabel.bottomAnchor constant:4],
+		[aiModelLabel.topAnchor constraintEqualToAnchor:gSettingsAICleanupCheckbox.bottomAnchor constant:10],
+		[aiModelLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
+
+		[gSettingsAIModelField.centerYAnchor constraintEqualToAnchor:aiModelLabel.centerYAnchor],
+		[gSettingsAIModelField.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
+		[gSettingsAIModelField.widthAnchor constraintEqualToConstant:210],
+
+		[aiApiKeyLabel.topAnchor constraintEqualToAnchor:aiModelLabel.bottomAnchor constant:10],
+		[aiApiKeyLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
+
+		[gSettingsAIApiKeyField.centerYAnchor constraintEqualToAnchor:aiApiKeyLabel.centerYAnchor],
+		[gSettingsAIApiKeyField.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
+		[gSettingsAIApiKeyField.widthAnchor constraintEqualToConstant:240],
+
+		[aiSaveButton.topAnchor constraintEqualToAnchor:gSettingsAIApiKeyField.bottomAnchor constant:8],
+		[aiSaveButton.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
+
+		[translationValueLabel.topAnchor constraintEqualToAnchor:aiSaveButton.bottomAnchor constant:8],
 		[translationValueLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
 		[translationValueLabel.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
 
@@ -1677,26 +1881,13 @@ static void startRecording(void) {
 		BOOL isFinal = result ? result.isFinal : NO;
 		if ((isFinal || error) && !gDidCommitTranscript) {
 			gDidCommitTranscript = true;
-			NSString *toCommit = gLatestTranscript;
-			dispatch_async(dispatch_get_main_queue(), ^{
-				addTranscriptToHistory(toCommit);
-				updateMenuState();
-			});
-		}
-		if ((isFinal || error) && gPasteWhenFinal) {
-			NSString *toPaste = gLatestTranscript;
+			NSString *toProcess = gLatestTranscript;
+			BOOL shouldPaste = gPasteWhenFinal;
+			BOOL shouldCopy = gCopyWhenFinal;
 			gPasteWhenFinal = false;
 			gCopyWhenFinal = false;
 			dispatch_async(dispatch_get_main_queue(), ^{
-				copyAndMaybePasteText(toPaste, true);
-			});
-		} else if ((isFinal || error) && gCopyWhenFinal) {
-			NSString *toCopy = gLatestTranscript;
-			gPasteWhenFinal = false;
-			gCopyWhenFinal = false;
-			dispatch_async(dispatch_get_main_queue(), ^{
-				copyAndMaybePasteText(toCopy, false);
-				updateMenuState();
+				maybeProcessFinalTranscript(toProcess, shouldPaste, shouldCopy);
 			});
 		}
 	}];
@@ -1781,6 +1972,17 @@ static void runApp(const char *localeCString) {
 		if ([defaults objectForKey:@"uiLanguage"] != nil) {
 			NSInteger lang = [defaults integerForKey:@"uiLanguage"];
 			if (lang == PKTUILanguageFR || lang == PKTUILanguageEN) gUILanguage = lang;
+		}
+		if ([defaults objectForKey:@"aiCleanupEnabled"] != nil) {
+			gAICleanupEnabled = [defaults boolForKey:@"aiCleanupEnabled"];
+		}
+		if ([defaults objectForKey:@"aiCleanupModel"] != nil) {
+			NSString *m = [defaults stringForKey:@"aiCleanupModel"];
+			if (m && m.length > 0) gAICleanupModel = m;
+		}
+		if ([defaults objectForKey:@"aiApiKey"] != nil) {
+			NSString *k = [defaults stringForKey:@"aiApiKey"];
+			gAIApiKey = k ?: @"";
 		}
 		if ([defaults objectForKey:@"hotKeyCode"] != nil) {
 			NSInteger hk = [defaults integerForKey:@"hotKeyCode"];

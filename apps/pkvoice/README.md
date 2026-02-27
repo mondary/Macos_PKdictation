@@ -35,7 +35,7 @@ open release/PKvoice.app
 Build avec version explicite :
 
 ```bash
-APP_VERSION=2.0 ./src/build-app.sh
+APP_VERSION=2.1 ./src/build-app.sh
 ```
 
 ## Test du notch (sandbox séparé)
@@ -72,6 +72,10 @@ Note:
   - **Settings…** : ouvre la fenêtre de réglages
   - **Historique (10)** : affiche les 10 dernières transcriptions (clic pour copier)
   - Quitter : *Quitter PKvoice*
+- Dans `Settings` → `IA Texte` :
+  - active **nettoyage IA** pour supprimer `euh`, répétitions, faux départs
+  - configure `Modèle` (ex: `gpt-4o-mini`)
+  - renseigne la clé API OpenAI (ou via variable d'environnement `PKVOICE_OPENAI_API_KEY` / `OPENAI_API_KEY`)
 
 ### Choisir une touche / locale
 
@@ -90,6 +94,8 @@ Hotkeys utiles (push-to-talk) :
 
 ## Changelog
 
+- `2026-02-27` : Version par défaut incrémentée à `2.1` (app principale + notch test).
+- `2026-02-27` : Ajout du nettoyage IA optionnel de la transcription finale (suppression des hésitations/répétitions), configurable dans `Settings` (`IA Texte`: toggle, modèle, clé API).
 - `2026-02-27` : Passage de version majeure en `2.0` (app principale + notch test).
 - `2026-02-27` : Version par défaut incrémentée à `1.15` (app principale + notch test).
 - `2026-02-27` : Notch : suppression du suffixe de pattern (`... · Wave`) dans le libellé ; affichage live de la transcription, sinon `Enregistrement…`.
