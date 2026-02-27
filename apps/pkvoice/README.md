@@ -90,6 +90,8 @@ Hotkeys utiles (push-to-talk) :
 
 ## Changelog
 
+- `2026-02-27` : Version par défaut incrémentée à `1.11` (app principale + notch test) ; désormais incrément de version à chaque commit.
+- `2026-02-27` : Correctif Settings : la ligne `Raccourci : ... (maintenir)` en haut se met maintenant à jour immédiatement après changement de touche.
 - `2026-02-27` : Settings restructurés en sections (`Transcription`, `Model & Traduction`, `Menu`, `Notch Animation`), ajout d'un bouton de capture du raccourci clavier (clic puis touche, `Fn` par défaut), et déplacement de la version en pied de fenêtre.
 - `2026-02-27` : Libellé settings ajusté : `Notch FN (animation)` devient `Notch Animation`.
 - `2026-02-27` : Settings notch: remplacement du sélecteur d'animation textuel par des mini-animations directement cliquables (toggle visuel), sans dropdown.

@@ -81,6 +81,7 @@ static BOOL gDidShowAccessibilityAlert = NO;
 static NSWindow *gSettingsWindow = nil;
 static NSVisualEffectView *gSettingsBackground = nil;
 static NSView *gSettingsContent = nil;
+static NSTextField *gSettingsMetaLabel = nil;
 static NSButton *gSettingsAutoPasteCheckbox = nil;
 static NSButton *gSettingsHotkeyButton = nil;
 static NSSlider *gSettingsMenuWidthSlider = nil;
@@ -130,6 +131,7 @@ static void syncSpinnerSettingsUI(void);
 static NSString *hotkeyNameForKeycode(CGKeyCode keycode);
 static void updateSettingsHotkeyButtonTitle(void);
 static void stopHotkeyCapture(void);
+static NSString *settingsMetaText(void);
 
 @interface MenuHandler : NSObject
 @end
@@ -896,6 +898,7 @@ static void hideNotch(void) {
 
 static void updateMenuState(void) {
 	if (gSettingsAutoPasteCheckbox) gSettingsAutoPasteCheckbox.state = gAutoPasteEnabled ? NSControlStateValueOn : NSControlStateValueOff;
+	if (gSettingsMetaLabel) gSettingsMetaLabel.stringValue = settingsMetaText();
 	updateSettingsHotkeyButtonTitle();
 	if (gSettingsMenuWidthSlider) gSettingsMenuWidthSlider.doubleValue = gMaxMenuTextWidth;
 	if (gSettingsMenuWidthValueLabel) gSettingsMenuWidthValueLabel.stringValue = [NSString stringWithFormat:@"%.0f px", gMaxMenuTextWidth];
@@ -933,6 +936,11 @@ static void updateMenuState(void) {
 
 static NSString *hotkeyTitle(void) {
 	return [NSString stringWithFormat:@"Raccourci : %@ (maintenir)", hotkeyNameForKeycode((CGKeyCode)gHotKeyCode)];
+}
+
+static NSString *settingsMetaText(void) {
+	NSString *locale = (gLocaleIdentifier && gLocaleIdentifier.length > 0) ? gLocaleIdentifier : @"system";
+	return [NSString stringWithFormat:@"%@\nLocale : %@", hotkeyTitle(), locale];
 }
 
 static void applyGlassTheme(void) {
@@ -1139,15 +1147,13 @@ static void showSettingsWindow(void) {
 	title.translatesAutoresizingMaskIntoConstraints = NO;
 	[content addSubview:title];
 
-	NSString *hotkey = hotkeyTitle() ?: @"";
-	NSString *locale = (gLocaleIdentifier && gLocaleIdentifier.length > 0) ? gLocaleIdentifier : @"system";
 	NSString *appVersion = [[[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"] description] ?: @"?";
-	NSTextField *subtitle = [NSTextField labelWithString:[NSString stringWithFormat:@"%@\nLocale : %@", hotkey, locale]];
-	subtitle.font = [NSFont systemFontOfSize:12];
-	subtitle.textColor = [NSColor secondaryLabelColor];
-	subtitle.lineBreakMode = NSLineBreakByWordWrapping;
-	subtitle.translatesAutoresizingMaskIntoConstraints = NO;
-	[content addSubview:subtitle];
+	gSettingsMetaLabel = [NSTextField labelWithString:settingsMetaText()];
+	gSettingsMetaLabel.font = [NSFont systemFontOfSize:12];
+	gSettingsMetaLabel.textColor = [NSColor secondaryLabelColor];
+	gSettingsMetaLabel.lineBreakMode = NSLineBreakByWordWrapping;
+	gSettingsMetaLabel.translatesAutoresizingMaskIntoConstraints = NO;
+	[content addSubview:gSettingsMetaLabel];
 
 	NSTextField *transcriptionSectionLabel = [NSTextField labelWithString:@"Transcription"];
 	transcriptionSectionLabel.font = [NSFont boldSystemFontOfSize:13];
@@ -1380,11 +1386,11 @@ static void showSettingsWindow(void) {
 		[title.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
 		[title.trailingAnchor constraintLessThanOrEqualToAnchor:content.trailingAnchor constant:-18],
 
-		[subtitle.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:6],
-		[subtitle.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
-		[subtitle.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
+		[gSettingsMetaLabel.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:6],
+		[gSettingsMetaLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
+		[gSettingsMetaLabel.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
 
-		[transcriptionSectionLabel.topAnchor constraintEqualToAnchor:subtitle.bottomAnchor constant:16],
+		[transcriptionSectionLabel.topAnchor constraintEqualToAnchor:gSettingsMetaLabel.bottomAnchor constant:16],
 		[transcriptionSectionLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
 
 		[hotkeyLabel.topAnchor constraintEqualToAnchor:transcriptionSectionLabel.bottomAnchor constant:10],
