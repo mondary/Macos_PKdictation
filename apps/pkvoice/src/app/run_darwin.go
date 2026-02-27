@@ -49,6 +49,8 @@ static NSString *gLocaleOverrideIdentifier = @"";
 static BOOL gForceFrenchLocale = YES;
 static const int64_t gMinHoldToRecordMs = 250;
 static uint64_t gPendingStartSeq = 0;
+static BOOL gCurrentSessionTranslate = NO;
+static BOOL gTranslationComboIsDown = NO;
 
 static NSStatusItem *gStatusItem = nil;
 static CFMachPortRef gEventTap = NULL;
@@ -81,11 +83,19 @@ typedef NS_ENUM(NSInteger, PKTUILanguage) {
 	PKTUILanguageFR = 0,
 	PKTUILanguageEN = 1,
 };
+typedef NS_ENUM(NSInteger, PKTTranslationTarget) {
+	PKTTranslationTargetEN = 0,
+	PKTTranslationTargetFR = 1,
+	PKTTranslationTargetES = 2,
+	PKTTranslationTargetDE = 3,
+	PKTTranslationTargetIT = 4,
+};
 static NSInteger gGlassTheme = PKTGlassThemeDark;
 static NSInteger gStatusIconStyle = PKTStatusIconStyleMicro;
 static NSInteger gSpinnerPattern = PKTSpinnerPatternSpinner;
 static NSInteger gSpinnerColor = PKTSpinnerColorMagenta;
 static NSInteger gUILanguage = PKTUILanguageFR;
+static NSInteger gTranslationTarget = PKTTranslationTargetEN;
 static NSImage *gStatusBaseIcon = nil;
 static NSPopover *gPopover = nil;
 static NSVisualEffectView *gPopoverBackground = nil;
@@ -115,6 +125,8 @@ static NSSecureTextField *gSettingsAIClaudeKeyField = nil;
 static NSSecureTextField *gSettingsAIGeminiKeyField = nil;
 static NSSecureTextField *gSettingsAIOpenRouterKeyField = nil;
 static NSSecureTextField *gSettingsAIZAIKeyField = nil;
+static NSTextField *gSettingsAITestStatusLabel = nil;
+static NSSegmentedControl *gSettingsTranslationTargetSegment = nil;
 static NSSlider *gSettingsMenuWidthSlider = nil;
 static NSTextField *gSettingsMenuWidthValueLabel = nil;
 static NSSegmentedControl *gSettingsThemeSegment = nil;
@@ -136,9 +148,10 @@ static BOOL gNotchShown = NO;
 static NSTimer *gSpinnerTimer = nil;
 static CFTimeInterval gSpinnerStartTime = 0;
 static BOOL gIsCapturingHotkey = NO;
+static BOOL gSuspendHotkeyHandling = NO;
 static id gHotkeyCaptureLocalMonitor = nil;
 
-static void startRecording(void);
+static void startRecordingWithTranslate(BOOL translate);
 static void stopRecording(void);
 static void updateMenuState(void);
 static bool copyToClipboard(NSString *text);
@@ -171,6 +184,14 @@ static void cleanTranscriptWithAIIfNeeded(NSString *text, void (^completion)(NSS
 static void maybeProcessFinalTranscript(NSString *rawText, BOOL shouldPaste, BOOL shouldCopy);
 static NSString *defaultModelForAIProvider(NSInteger provider);
 static NSInteger effectiveAIProvider(void);
+static NSString *aiProviderTitle(NSInteger provider);
+static NSString *effectiveAIModelForProvider(NSInteger provider);
+static NSString *effectiveAIApiKeyForProvider(NSInteger provider);
+static NSString *extractOpenAICompatibleResponseText(id json, NSString *fallback);
+static NSString *extractClaudeResponseText(id json, NSString *fallback);
+static NSString *extractGeminiResponseText(id json, NSString *fallback);
+static NSString *translationTargetCode(NSInteger target);
+static void translateTranscriptWithAI(NSString *text, void (^completion)(NSString *outText));
 static NSString *sanitizedAIText(NSString *s, NSString *fallback);
 
 @interface MenuHandler : NSObject
@@ -199,6 +220,13 @@ static NSString *sanitizedAIText(NSString *s, NSString *fallback);
 	(void)sender;
 	closePopover();
 	[NSApp terminate:nil];
+}
+- (void)windowWillClose:(NSNotification *)notification {
+	NSWindow *w = (NSWindow *)notification.object;
+	if (w == gSettingsWindow) {
+		gSuspendHotkeyHandling = NO;
+		stopHotkeyCapture();
+	}
 }
 - (void)settingsToggleAutoPaste:(id)sender {
 	NSButton *b = (NSButton *)sender;
@@ -268,6 +296,180 @@ static NSString *sanitizedAIText(NSString *s, NSString *fallback);
 	// Backward compatibility with previous single-key setting.
 	[[NSUserDefaults standardUserDefaults] setObject:gAIOpenAIKey forKey:@"aiApiKey"];
 	updateMenuState();
+}
+- (void)settingsTestAIConfig:(id)sender {
+	(void)sender;
+	[self settingsSaveAIConfig:nil];
+
+	NSInteger provider = effectiveAIProvider();
+	NSString *providerName = aiProviderTitle(provider);
+	NSString *apiKey = effectiveAIApiKeyForProvider(provider);
+	NSString *model = effectiveAIModelForProvider(provider);
+	if (!apiKey || apiKey.length == 0) {
+		if (gSettingsAITestStatusLabel) {
+			gSettingsAITestStatusLabel.stringValue = uiText(@"Clé API manquante pour ce provider.", @"Missing API key for this provider.");
+			gSettingsAITestStatusLabel.textColor = [NSColor systemRedColor];
+		}
+		return;
+	}
+	if (gSettingsAITestStatusLabel) {
+		gSettingsAITestStatusLabel.stringValue = uiText(@"Test en cours…", @"Testing connection...");
+		gSettingsAITestStatusLabel.textColor = [NSColor secondaryLabelColor];
+	}
+
+	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+		@autoreleasepool {
+			NSString *raw = @"Test de connexion PKvoice. Reponds uniquement: OK";
+			NSURL *url = nil;
+			NSDictionary *payload = nil;
+			NSMutableURLRequest *req = nil;
+			BOOL usesBearerHeader = YES;
+
+			if (provider == PKTAIProviderGemini) {
+				NSString *escapedModel = [model stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLPathAllowedCharacterSet]] ?: model;
+				NSString *escapedKey = [apiKey stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLQueryAllowedCharacterSet]] ?: apiKey;
+				NSString *urlString = [NSString stringWithFormat:@"https://generativelanguage.googleapis.com/v1beta/models/%@:generateContent?key=%@", escapedModel, escapedKey];
+				url = [NSURL URLWithString:urlString];
+				payload = @{
+					@"systemInstruction": @{ @"parts": @[ @{ @"text": @"Tu verifies juste la connexion API. Reponds exactement OK." } ] },
+					@"contents": @[ @{ @"parts": @[ @{ @"text": raw } ] } ],
+					@"generationConfig": @{ @"temperature": @0.0 }
+				};
+				usesBearerHeader = NO;
+			} else if (provider == PKTAIProviderClaude) {
+				url = [NSURL URLWithString:@"https://api.anthropic.com/v1/messages"];
+				payload = @{
+					@"model": model,
+					@"max_tokens": @64,
+					@"temperature": @0.0,
+					@"system": @"Tu verifies juste la connexion API. Reponds exactement OK.",
+					@"messages": @[ @{ @"role": @"user", @"content": raw } ]
+				};
+				usesBearerHeader = NO;
+			} else {
+				NSString *endpoint = @"https://api.openai.com/v1/chat/completions";
+				if (provider == PKTAIProviderOpenRouter) endpoint = @"https://openrouter.ai/api/v1/chat/completions";
+				if (provider == PKTAIProviderZAI) endpoint = @"https://api.z.ai/api/paas/v4/chat/completions";
+				url = [NSURL URLWithString:endpoint];
+				payload = @{
+					@"model": model,
+					@"temperature": @0.0,
+					@"messages": @[
+						@{
+							@"role": @"system",
+							@"content": @"Tu verifies juste la connexion API. Reponds exactement OK."
+						},
+						@{
+							@"role": @"user",
+							@"content": raw
+						}
+					]
+				};
+			}
+			if (!url || !payload) {
+				dispatch_async(dispatch_get_main_queue(), ^{
+					if (gSettingsAITestStatusLabel) {
+						gSettingsAITestStatusLabel.stringValue = uiText(@"Erreur de configuration du test.", @"Invalid test configuration.");
+						gSettingsAITestStatusLabel.textColor = [NSColor systemRedColor];
+					}
+				});
+				return;
+			}
+
+			NSError *jsonErr = nil;
+			NSData *body = [NSJSONSerialization dataWithJSONObject:payload options:0 error:&jsonErr];
+			if (!body || jsonErr) {
+				dispatch_async(dispatch_get_main_queue(), ^{
+					if (gSettingsAITestStatusLabel) {
+						gSettingsAITestStatusLabel.stringValue = uiText(@"Erreur JSON pendant le test.", @"JSON error while testing.");
+						gSettingsAITestStatusLabel.textColor = [NSColor systemRedColor];
+					}
+				});
+				return;
+			}
+
+			req = [NSMutableURLRequest requestWithURL:url];
+			req.HTTPMethod = @"POST";
+			req.timeoutInterval = 20.0;
+			[req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+			if (provider == PKTAIProviderClaude) {
+				[req setValue:apiKey forHTTPHeaderField:@"x-api-key"];
+				[req setValue:@"2023-06-01" forHTTPHeaderField:@"anthropic-version"];
+			} else if (usesBearerHeader) {
+				[req setValue:[NSString stringWithFormat:@"Bearer %@", apiKey] forHTTPHeaderField:@"Authorization"];
+				if (provider == PKTAIProviderOpenRouter) {
+					[req setValue:@"https://pkvoice.local" forHTTPHeaderField:@"HTTP-Referer"];
+					[req setValue:@"PKvoice" forHTTPHeaderField:@"X-Title"];
+				}
+			}
+			req.HTTPBody = body;
+
+			dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+			__block NSData *respData = nil;
+			__block NSError *respErr = nil;
+			__block NSInteger statusCode = 0;
+			NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+				if ([response isKindOfClass:[NSHTTPURLResponse class]]) {
+					statusCode = ((NSHTTPURLResponse *)response).statusCode;
+				}
+				respData = data;
+				respErr = error;
+				dispatch_semaphore_signal(sem);
+			}];
+			[task resume];
+			dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(16 * NSEC_PER_SEC)));
+
+			if (respErr || !respData) {
+				dispatch_async(dispatch_get_main_queue(), ^{
+					if (gSettingsAITestStatusLabel) {
+						gSettingsAITestStatusLabel.stringValue = uiText(@"Échec réseau pendant le test.", @"Network failure during test.");
+						gSettingsAITestStatusLabel.textColor = [NSColor systemRedColor];
+					}
+				});
+				return;
+			}
+			if (statusCode < 200 || statusCode >= 300) {
+				dispatch_async(dispatch_get_main_queue(), ^{
+					if (gSettingsAITestStatusLabel) {
+						gSettingsAITestStatusLabel.stringValue = [NSString stringWithFormat:@"%@ %ld", uiText(@"Échec HTTP", @"HTTP failure"), (long)statusCode];
+						gSettingsAITestStatusLabel.textColor = [NSColor systemRedColor];
+					}
+				});
+				return;
+			}
+
+			NSError *parseErr = nil;
+			id json = [NSJSONSerialization JSONObjectWithData:respData options:0 error:&parseErr];
+			NSString *out = @"";
+			if (!parseErr) {
+				switch (provider) {
+				case PKTAIProviderClaude:
+					out = extractClaudeResponseText(json, @"");
+					break;
+				case PKTAIProviderGemini:
+					out = extractGeminiResponseText(json, @"");
+					break;
+				case PKTAIProviderOpenRouter:
+				case PKTAIProviderZAI:
+				case PKTAIProviderOpenAI:
+				default:
+					out = extractOpenAICompatibleResponseText(json, @"");
+					break;
+				}
+			}
+
+			dispatch_async(dispatch_get_main_queue(), ^{
+				if (!gSettingsAITestStatusLabel) return;
+				if (out.length > 0) {
+					gSettingsAITestStatusLabel.stringValue = [NSString stringWithFormat:@"%@ · %@ · %@", uiText(@"Connexion OK", @"Connection OK"), providerName, model];
+					gSettingsAITestStatusLabel.textColor = [NSColor systemGreenColor];
+				} else {
+					gSettingsAITestStatusLabel.stringValue = uiText(@"Réponse invalide du provider.", @"Invalid provider response.");
+					gSettingsAITestStatusLabel.textColor = [NSColor systemRedColor];
+				}
+			});
+		}
+	});
 }
 - (void)settingsChangeHotkey:(id)sender {
 	(void)sender;
@@ -341,6 +543,15 @@ static NSString *sanitizedAIText(NSString *s, NSString *fallback);
 		teardownSettingsWindow();
 		showSettingsWindow();
 	}
+	updateMenuState();
+}
+- (void)settingsTranslationTargetChanged:(id)sender {
+	NSSegmentedControl *seg = (NSSegmentedControl *)sender;
+	if (![seg isKindOfClass:[NSSegmentedControl class]]) return;
+	NSInteger v = seg.selectedSegment;
+	if (v < PKTTranslationTargetEN || v > PKTTranslationTargetIT) return;
+	gTranslationTarget = v;
+	[[NSUserDefaults standardUserDefaults] setInteger:gTranslationTarget forKey:@"translationTarget"];
 	updateMenuState();
 }
 - (void)settingsPatternClicked:(id)sender {
@@ -918,7 +1129,10 @@ static void refreshSpinnerVisuals(void) {
 
 static void updateNotchLabel(void) {
 	if (!gNotchLabel) return;
-	NSString *fallback = gIsRecording ? uiText(@"Enregistrement…", @"Recording…") : @"";
+	NSString *fallback = @"";
+	if (gIsRecording) {
+		fallback = gCurrentSessionTranslate ? uiText(@"Traduction…", @"Translating...") : uiText(@"Enregistrement…", @"Recording…");
+	}
 	NSString *live = [gLatestTranscript stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
 	if (gIsRecording && live && live.length > 0) {
 		gNotchLabel.stringValue = live;
@@ -1045,6 +1259,7 @@ static void updateMenuState(void) {
 	if (gSettingsAIGeminiKeyField) gSettingsAIGeminiKeyField.stringValue = gAIGeminiKey ?: @"";
 	if (gSettingsAIOpenRouterKeyField) gSettingsAIOpenRouterKeyField.stringValue = gAIOpenRouterKey ?: @"";
 	if (gSettingsAIZAIKeyField) gSettingsAIZAIKeyField.stringValue = gAIZAIKey ?: @"";
+	if (gSettingsTranslationTargetSegment) gSettingsTranslationTargetSegment.selectedSegment = gTranslationTarget;
 	if (gSettingsMenuWidthSlider) gSettingsMenuWidthSlider.doubleValue = gMaxMenuTextWidth;
 	if (gSettingsMenuWidthValueLabel) gSettingsMenuWidthValueLabel.stringValue = [NSString stringWithFormat:@"%.0f px", gMaxMenuTextWidth];
 	if (gSettingsThemeSegment) gSettingsThemeSegment.selectedSegment = gGlassTheme;
@@ -1083,7 +1298,7 @@ static void updateMenuState(void) {
 }
 
 static NSString *hotkeyTitle(void) {
-	return [NSString stringWithFormat:@"%@ : %@ (%@)", uiText(@"Raccourci", @"Hotkey"), hotkeyNameForKeycode((CGKeyCode)gHotKeyCode), uiText(@"maintenir", @"hold")];
+	return [NSString stringWithFormat:@"%@ : %@ (%@) • %@ : Fn+Ctrl", uiText(@"Raccourci", @"Hotkey"), hotkeyNameForKeycode((CGKeyCode)gHotKeyCode), uiText(@"maintenir", @"hold"), uiText(@"Traduction", @"Translate")];
 }
 
 static NSString *effectiveRecognizerLocale(void) {
@@ -1122,6 +1337,18 @@ static NSString *defaultModelForAIProvider(NSInteger provider) {
 static NSInteger effectiveAIProvider(void) {
 	if (gAIProvider < PKTAIProviderOpenAI || gAIProvider > PKTAIProviderZAI) return PKTAIProviderOpenAI;
 	return gAIProvider;
+}
+
+static NSString *aiProviderTitle(NSInteger provider) {
+	switch (provider) {
+	case PKTAIProviderClaude: return @"Claude";
+	case PKTAIProviderGemini: return @"Gemini";
+	case PKTAIProviderOpenRouter: return @"OpenRouter";
+	case PKTAIProviderZAI: return @"Z.AI";
+	case PKTAIProviderOpenAI:
+	default:
+		return @"OpenAI";
+	}
 }
 
 static NSString *effectiveAIModelForProvider(NSInteger provider) {
@@ -1230,6 +1457,18 @@ static NSString *extractGeminiResponseText(id json, NSString *fallback) {
 	}
 	if (texts.count == 0) return fallback;
 	return sanitizedAIText([texts componentsJoinedByString:@" "], fallback);
+}
+
+static NSString *translationTargetCode(NSInteger target) {
+	switch (target) {
+	case PKTTranslationTargetFR: return @"fr";
+	case PKTTranslationTargetES: return @"es";
+	case PKTTranslationTargetDE: return @"de";
+	case PKTTranslationTargetIT: return @"it";
+	case PKTTranslationTargetEN:
+	default:
+		return @"en";
+	}
 }
 
 static NSString *sanitizedAIText(NSString *s, NSString *fallback) {
@@ -1379,10 +1618,146 @@ static void cleanTranscriptWithAIIfNeeded(NSString *text, void (^completion)(NSS
 	});
 }
 
+static void translateTranscriptWithAI(NSString *text, void (^completion)(NSString *outText)) {
+	NSString *raw = [text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+	if (raw.length == 0) {
+		if (completion) completion(@"");
+		return;
+	}
+	NSInteger provider = effectiveAIProvider();
+	NSString *apiKey = effectiveAIApiKeyForProvider(provider);
+	if (apiKey.length == 0) {
+		if (completion) completion(raw);
+		return;
+	}
+	NSString *model = effectiveAIModelForProvider(provider);
+	NSString *target = translationTargetCode(gTranslationTarget);
+	NSString *prompt = [NSString stringWithFormat:@"Tu nettoies puis traduis strictement cette transcription vers la langue %@. Supprime hesitations et repetitions, conserve le sens, n'ajoute rien.", target];
+
+	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+		@autoreleasepool {
+			NSURL *url = nil;
+			NSDictionary *payload = nil;
+			NSMutableURLRequest *req = nil;
+			BOOL usesBearerHeader = YES;
+
+			if (provider == PKTAIProviderGemini) {
+				NSString *escapedModel = [model stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLPathAllowedCharacterSet]] ?: model;
+				NSString *escapedKey = [apiKey stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLQueryAllowedCharacterSet]] ?: apiKey;
+				NSString *urlString = [NSString stringWithFormat:@"https://generativelanguage.googleapis.com/v1beta/models/%@:generateContent?key=%@", escapedModel, escapedKey];
+				url = [NSURL URLWithString:urlString];
+				payload = @{
+					@"systemInstruction": @{ @"parts": @[ @{ @"text": prompt } ] },
+					@"contents": @[ @{ @"parts": @[ @{ @"text": raw } ] } ],
+					@"generationConfig": @{ @"temperature": @0.1 }
+				};
+				usesBearerHeader = NO;
+			} else if (provider == PKTAIProviderClaude) {
+				url = [NSURL URLWithString:@"https://api.anthropic.com/v1/messages"];
+				payload = @{
+					@"model": model,
+					@"max_tokens": @768,
+					@"temperature": @0.1,
+					@"system": prompt,
+					@"messages": @[ @{ @"role": @"user", @"content": raw } ]
+				};
+				usesBearerHeader = NO;
+			} else {
+				NSString *endpoint = @"https://api.openai.com/v1/chat/completions";
+				if (provider == PKTAIProviderOpenRouter) endpoint = @"https://openrouter.ai/api/v1/chat/completions";
+				if (provider == PKTAIProviderZAI) endpoint = @"https://api.z.ai/api/paas/v4/chat/completions";
+				url = [NSURL URLWithString:endpoint];
+				payload = @{
+					@"model": model,
+					@"temperature": @0.1,
+					@"messages": @[
+						@{ @"role": @"system", @"content": prompt },
+						@{ @"role": @"user", @"content": raw }
+					]
+				};
+			}
+			if (!url || !payload) {
+				dispatch_async(dispatch_get_main_queue(), ^{ if (completion) completion(raw); });
+				return;
+			}
+
+			NSError *jsonErr = nil;
+			NSData *body = [NSJSONSerialization dataWithJSONObject:payload options:0 error:&jsonErr];
+			if (!body || jsonErr) {
+				dispatch_async(dispatch_get_main_queue(), ^{ if (completion) completion(raw); });
+				return;
+			}
+
+			req = [NSMutableURLRequest requestWithURL:url];
+			req.HTTPMethod = @"POST";
+			req.timeoutInterval = 20.0;
+			[req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+			if (provider == PKTAIProviderClaude) {
+				[req setValue:apiKey forHTTPHeaderField:@"x-api-key"];
+				[req setValue:@"2023-06-01" forHTTPHeaderField:@"anthropic-version"];
+			} else if (usesBearerHeader) {
+				[req setValue:[NSString stringWithFormat:@"Bearer %@", apiKey] forHTTPHeaderField:@"Authorization"];
+				if (provider == PKTAIProviderOpenRouter) {
+					[req setValue:@"https://pkvoice.local" forHTTPHeaderField:@"HTTP-Referer"];
+					[req setValue:@"PKvoice" forHTTPHeaderField:@"X-Title"];
+				}
+			}
+			req.HTTPBody = body;
+
+			dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+			__block NSData *respData = nil;
+			__block NSError *respErr = nil;
+			__block NSInteger statusCode = 0;
+			NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+				if ([response isKindOfClass:[NSHTTPURLResponse class]]) {
+					statusCode = ((NSHTTPURLResponse *)response).statusCode;
+				}
+				respData = data;
+				respErr = error;
+				dispatch_semaphore_signal(sem);
+			}];
+			[task resume];
+			dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(16 * NSEC_PER_SEC)));
+
+			if (respErr || !respData || statusCode < 200 || statusCode >= 300) {
+				dispatch_async(dispatch_get_main_queue(), ^{ if (completion) completion(raw); });
+				return;
+			}
+
+			NSError *parseErr = nil;
+			id json = [NSJSONSerialization JSONObjectWithData:respData options:0 error:&parseErr];
+			NSString *out = raw;
+			if (!parseErr) {
+				switch (provider) {
+				case PKTAIProviderClaude:
+					out = extractClaudeResponseText(json, raw);
+					break;
+				case PKTAIProviderGemini:
+					out = extractGeminiResponseText(json, raw);
+					break;
+				case PKTAIProviderOpenRouter:
+				case PKTAIProviderZAI:
+				case PKTAIProviderOpenAI:
+				default:
+					out = extractOpenAICompatibleResponseText(json, raw);
+					break;
+				}
+			}
+
+			dispatch_async(dispatch_get_main_queue(), ^{
+				if (completion) completion(out ?: raw);
+			});
+		}
+	});
+}
+
 static void maybeProcessFinalTranscript(NSString *rawText, BOOL shouldPaste, BOOL shouldCopy) {
 	NSString *base = [rawText stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-	if (base.length == 0) return;
-	cleanTranscriptWithAIIfNeeded(base, ^(NSString *outText) {
+	if (base.length == 0) {
+		gCurrentSessionTranslate = NO;
+		return;
+	}
+	void (^done)(NSString *) = ^(NSString *outText) {
 		NSString *final = sanitizedAIText(outText, base);
 		gLatestTranscript = final;
 		addTranscriptToHistory(final);
@@ -1392,7 +1767,13 @@ static void maybeProcessFinalTranscript(NSString *rawText, BOOL shouldPaste, BOO
 		} else if (shouldCopy) {
 			copyAndMaybePasteText(final, false);
 		}
-	});
+		gCurrentSessionTranslate = NO;
+	};
+	if (gCurrentSessionTranslate) {
+		translateTranscriptWithAI(base, done);
+		return;
+	}
+	cleanTranscriptWithAIIfNeeded(base, done);
 }
 
 static void applyGlassTheme(void) {
@@ -1575,6 +1956,8 @@ static void teardownSettingsWindow(void) {
 	gSettingsAIGeminiKeyField = nil;
 	gSettingsAIOpenRouterKeyField = nil;
 	gSettingsAIZAIKeyField = nil;
+	gSettingsAITestStatusLabel = nil;
+	gSettingsTranslationTargetSegment = nil;
 	gSettingsMenuWidthSlider = nil;
 	gSettingsMenuWidthValueLabel = nil;
 	gSettingsThemeSegment = nil;
@@ -1593,6 +1976,7 @@ static void teardownSettingsWindow(void) {
 
 static void showSettingsWindow(void) {
 	if (gSettingsWindow) {
+		gSuspendHotkeyHandling = YES;
 		updateMenuState();
 		if (gSettingsMenuWidthSlider) gSettingsMenuWidthSlider.doubleValue = gMaxMenuTextWidth;
 		if (gSettingsMenuWidthValueLabel) gSettingsMenuWidthValueLabel.stringValue = [NSString stringWithFormat:@"%.0f px", gMaxMenuTextWidth];
@@ -1603,11 +1987,12 @@ static void showSettingsWindow(void) {
 		return;
 	}
 
-	NSRect frame = NSMakeRect(0, 0, 520, 930);
+	NSRect frame = NSMakeRect(0, 0, 520, 980);
 	NSWindowStyleMask style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable;
 	gSettingsWindow = [[NSWindow alloc] initWithContentRect:frame styleMask:style backing:NSBackingStoreBuffered defer:NO];
 	gSettingsWindow.title = [NSString stringWithFormat:@"PKvoice — %@", uiText(@"Paramètres", @"Settings")];
 	gSettingsWindow.releasedWhenClosed = NO;
+	gSettingsWindow.delegate = (id<NSWindowDelegate>)gMenuHandler;
 
 	gSettingsBackground = [NSVisualEffectView new];
 	gSettingsBackground.frame = gSettingsWindow.contentView.bounds;
@@ -1750,11 +2135,25 @@ static void showSettingsWindow(void) {
 	aiSaveButton.bezelStyle = NSBezelStyleRounded;
 	[content addSubview:aiSaveButton];
 
-	NSTextField *translationValueLabel = [NSTextField labelWithString:uiText(@"Traduction : à venir", @"Translation: coming soon")];
-	translationValueLabel.font = [NSFont systemFontOfSize:12];
-	translationValueLabel.textColor = [NSColor secondaryLabelColor];
-	translationValueLabel.translatesAutoresizingMaskIntoConstraints = NO;
-	[content addSubview:translationValueLabel];
+	NSButton *aiTestButton = [NSButton buttonWithTitle:uiText(@"Tester IA", @"Test AI") target:gMenuHandler action:@selector(settingsTestAIConfig:)];
+	aiTestButton.translatesAutoresizingMaskIntoConstraints = NO;
+	aiTestButton.bezelStyle = NSBezelStyleRounded;
+	[content addSubview:aiTestButton];
+
+	gSettingsAITestStatusLabel = [NSTextField labelWithString:uiText(@"Prêt pour test de connexion.", @"Ready for connection test.")];
+	gSettingsAITestStatusLabel.font = [NSFont systemFontOfSize:11];
+	gSettingsAITestStatusLabel.textColor = [NSColor secondaryLabelColor];
+	gSettingsAITestStatusLabel.translatesAutoresizingMaskIntoConstraints = NO;
+	[content addSubview:gSettingsAITestStatusLabel];
+
+	NSTextField *translationLabel = [NSTextField labelWithString:uiText(@"Langue traduction (Fn+Ctrl)", @"Translation language (Fn+Ctrl)")];
+	translationLabel.translatesAutoresizingMaskIntoConstraints = NO;
+	[content addSubview:translationLabel];
+
+	gSettingsTranslationTargetSegment = [NSSegmentedControl segmentedControlWithLabels:@[ @"EN", @"FR", @"ES", @"DE", @"IT" ] trackingMode:NSSegmentSwitchTrackingSelectOne target:gMenuHandler action:@selector(settingsTranslationTargetChanged:)];
+	gSettingsTranslationTargetSegment.selectedSegment = gTranslationTarget;
+	gSettingsTranslationTargetSegment.translatesAutoresizingMaskIntoConstraints = NO;
+	[content addSubview:gSettingsTranslationTargetSegment];
 
 	NSTextField *menuSectionLabel = [NSTextField labelWithString:uiText(@"Menu", @"Menu")];
 	menuSectionLabel.font = [NSFont boldSystemFontOfSize:13];
@@ -2034,11 +2433,21 @@ static void showSettingsWindow(void) {
 		[aiSaveButton.topAnchor constraintEqualToAnchor:gSettingsAIZAIKeyField.bottomAnchor constant:8],
 		[aiSaveButton.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
 
-		[translationValueLabel.topAnchor constraintEqualToAnchor:aiSaveButton.bottomAnchor constant:8],
-		[translationValueLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
-		[translationValueLabel.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
+		[aiTestButton.centerYAnchor constraintEqualToAnchor:aiSaveButton.centerYAnchor],
+		[aiTestButton.trailingAnchor constraintEqualToAnchor:aiSaveButton.leadingAnchor constant:-8],
 
-		[menuSectionLabel.topAnchor constraintEqualToAnchor:translationValueLabel.bottomAnchor constant:18],
+		[gSettingsAITestStatusLabel.topAnchor constraintEqualToAnchor:aiSaveButton.bottomAnchor constant:8],
+		[gSettingsAITestStatusLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
+		[gSettingsAITestStatusLabel.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
+
+		[translationLabel.topAnchor constraintEqualToAnchor:gSettingsAITestStatusLabel.bottomAnchor constant:8],
+		[translationLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
+
+		[gSettingsTranslationTargetSegment.centerYAnchor constraintEqualToAnchor:translationLabel.centerYAnchor],
+		[gSettingsTranslationTargetSegment.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
+		[gSettingsTranslationTargetSegment.widthAnchor constraintEqualToConstant:220],
+
+		[menuSectionLabel.topAnchor constraintEqualToAnchor:translationLabel.bottomAnchor constant:18],
 		[menuSectionLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
 
 		[themeLabel.topAnchor constraintEqualToAnchor:menuSectionLabel.bottomAnchor constant:10],
@@ -2109,6 +2518,7 @@ static void showSettingsWindow(void) {
 	[gSettingsWindow center];
 	[NSApp activateIgnoringOtherApps:YES];
 	[gSettingsWindow makeKeyAndOrderFront:gSettingsWindow];
+	gSuspendHotkeyHandling = YES;
 	refreshSpinnerVisuals();
 }
 
@@ -2131,7 +2541,7 @@ static void stopRecording(void) {
 	gCopyWhenFinal = !gAutoPasteEnabled;
 }
 
-static void startRecording(void) {
+static void startRecordingWithTranslate(BOOL translate) {
 	if (gIsRecording) return;
 	if (!gRecognizer) return;
 	if (!gRecognizer.isAvailable) {
@@ -2141,6 +2551,7 @@ static void startRecording(void) {
 	}
 
 	gIsRecording = true;
+	gCurrentSessionTranslate = translate;
 	gDidCommitTranscript = false;
 	gPasteWhenFinal = false;
 	gCopyWhenFinal = false;
@@ -2171,6 +2582,7 @@ static void startRecording(void) {
 	if (![gEngine startAndReturnError:&err]) {
 		NSLog(@"Audio engine start error: %@", err);
 		gIsRecording = false;
+		gCurrentSessionTranslate = NO;
 		hideNotch();
 		updateStatusItemTitle();
 		return;
@@ -2208,6 +2620,7 @@ static CGEventRef eventTapCallback(CGEventTapProxy proxy, CGEventType type, CGEv
 		if (gEventTap) CGEventTapEnable(gEventTap, true);
 		return event;
 	}
+	if (gSuspendHotkeyHandling) return event;
 	if (gIsCapturingHotkey) return event;
 	if (type != kCGEventKeyDown && type != kCGEventKeyUp && type != kCGEventFlagsChanged) return event;
 
@@ -2222,7 +2635,7 @@ static CGEventRef eventTapCallback(CGEventTapProxy proxy, CGEventType type, CGEv
 	if (type == kCGEventKeyDown) {
 		dispatch_async(dispatch_get_main_queue(), ^{
 			showNotch();
-			startRecording();
+			startRecordingWithTranslate(NO);
 		});
 	} else if (type == kCGEventKeyUp) {
 		dispatch_async(dispatch_get_main_queue(), ^{
@@ -2282,6 +2695,10 @@ static void runApp(const char *localeCString) {
 		if ([defaults objectForKey:@"uiLanguage"] != nil) {
 			NSInteger lang = [defaults integerForKey:@"uiLanguage"];
 			if (lang == PKTUILanguageFR || lang == PKTUILanguageEN) gUILanguage = lang;
+		}
+		if ([defaults objectForKey:@"translationTarget"] != nil) {
+			NSInteger t = [defaults integerForKey:@"translationTarget"];
+			if (t >= PKTTranslationTargetEN && t <= PKTTranslationTargetIT) gTranslationTarget = t;
 		}
 		if ([defaults objectForKey:@"aiCleanupEnabled"] != nil) {
 			gAICleanupEnabled = [defaults boolForKey:@"aiCleanupEnabled"];
@@ -2355,9 +2772,36 @@ static void runApp(const char *localeCString) {
 
 		// Modifier keys (Fn/Cmd/Option/Shift/Ctrl) may not produce reliable keyDown/up events; listen to modifier flag changes.
 		void (^modifierFlagsHandler)(NSEvent *) = ^(NSEvent *e) {
+			if (gSuspendHotkeyHandling) return;
 			if (gIsCapturingHotkey) return;
+			NSEventModifierFlags flags = e.modifierFlags;
+			BOOL fnDown = (flags & NSEventModifierFlagFunction) != 0;
+			BOOL ctrlDown = (flags & NSEventModifierFlagControl) != 0;
+			BOOL translationDown = fnDown && ctrlDown;
+
+			if (translationDown != gTranslationComboIsDown) {
+				gTranslationComboIsDown = translationDown;
+				if (translationDown) {
+					showNotch();
+					uint64_t seq = ++gPendingStartSeq;
+					dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(gMinHoldToRecordMs * NSEC_PER_MSEC)), dispatch_get_main_queue(), ^{
+						if (!gTranslationComboIsDown) return;
+						if (gIsRecording) return;
+						if (seq != gPendingStartSeq) return;
+						startRecordingWithTranslate(YES);
+					});
+				} else {
+					++gPendingStartSeq;
+					hideNotch();
+					dispatch_async(dispatch_get_main_queue(), ^{
+						if (gIsRecording) stopRecording();
+					});
+				}
+				return;
+			}
+			if (gTranslationComboIsDown) return;
 			if (!isModifierHotKeyCode((CGKeyCode)gHotKeyCode)) return;
-			BOOL down = isHotKeyDownForFlags(e.modifierFlags);
+			BOOL down = isHotKeyDownForFlags(flags);
 			if (down == gModifierIsDown) return;
 			gModifierIsDown = down;
 			if (down) {
@@ -2368,7 +2812,7 @@ static void runApp(const char *localeCString) {
 					if (!gModifierIsDown) return;
 					if (gIsRecording) return;
 					if (seq != gPendingStartSeq) return;
-					startRecording();
+					startRecordingWithTranslate(NO);
 				});
 				return;
 			}

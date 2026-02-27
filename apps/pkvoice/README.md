@@ -67,6 +67,7 @@ Note:
 ## Utilisation
 
 - Par défaut : maintenir **Fn** pour parler, relâcher pour coller la transcription.
+- Traduction : maintenir **Fn+Ctrl** pour parler, relâcher pour coller la transcription traduite (langue configurable).
 - Menu barre “PKT” :
   - **Transcript (auto-paste)** : toggle (si OFF, ça copie seulement dans le clipboard, sans coller)
   - **Settings…** : ouvre la fenêtre de réglages
@@ -77,6 +78,14 @@ Note:
   - choisis le provider : `OpenAI`, `Claude`, `Gemini`, `OpenRouter` ou `Z.AI`
   - configure `Modèle` (selon le provider choisi)
   - renseigne les clés API dédiées directement dans les settings
+  - bouton **Tester IA** pour vérifier `provider + modèle + clé` directement depuis l'app
+  - choix de la **langue de traduction** pour le raccourci `Fn+Ctrl` (`EN/FR/ES/DE/IT`)
+  - liens pour créer/récupérer les clés :
+    - OpenAI : https://platform.openai.com/api-keys
+    - Claude : https://platform.claude.com/settings/keys
+    - Gemini : https://ai.google.dev/gemini-api/docs/api-key (console: https://aistudio.google.com/apikey)
+    - OpenRouter : https://openrouter.ai/settings/keys
+    - Z.AI : https://z.ai/manage-apikey/apikey-list
   - fallback via variables d’environnement :
     - OpenAI : `PKVOICE_OPENAI_API_KEY` / `OPENAI_API_KEY`
     - Claude : `PKVOICE_CLAUDE_API_KEY` / `ANTHROPIC_API_KEY`
@@ -101,6 +110,11 @@ Hotkeys utiles (push-to-talk) :
 
 ## Changelog
 
+- `2026-02-27` : Version par défaut incrémentée à `2.3` (app principale + notch test).
+- `2026-02-27` : Ajout d’un test de connexion IA dans `Settings` (bouton `Tester IA`, statut de résultat).
+- `2026-02-27` : Nouveau raccourci traduction `Fn+Ctrl` : transcription nettoyée + traduction dans la langue cible configurée (`EN/FR/ES/DE/IT`).
+- `2026-02-27` : Correctif saisie settings : `Cmd+V` fonctionne dans les champs de clé API (hotkeys suspendus tant que la fenêtre settings est ouverte).
+- `2026-02-27` : README : ajout des liens directs pour obtenir les clés API (`OpenAI`, `Claude`, `Gemini`, `OpenRouter`, `Z.AI`).
 - `2026-02-27` : Version par défaut incrémentée à `2.2` (app principale + notch test).
 - `2026-02-27` : `IA Texte` passe en multi-provider avec clés séparées : `OpenAI`, `Claude`, `Gemini`, `OpenRouter`, `Z.AI`.
 - `2026-02-27` : Version par défaut incrémentée à `2.1` (app principale + notch test).
