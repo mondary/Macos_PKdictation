@@ -1,3 +1,7 @@
+<div align="center">
+  <img src="icon.png" alt="PKvoice Icon" width="128" height="128">
+</div>
+
 # PKvoice (macOS / Go)
 
 Une petite app macOS en Go (avec bindings Objective‑C via cgo) qui :
