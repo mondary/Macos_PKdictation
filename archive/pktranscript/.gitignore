@@ -24,3 +24,6 @@ go/dist
 *.swo
 *~
 .*.sw[a-z]
+
+# IDE / editor local config
+.vscode/
