@@ -39,3 +39,6 @@ src/.cache/
 
 # Skills directory
 .skills/
+
+# IDE / editor local config
+.vscode/
