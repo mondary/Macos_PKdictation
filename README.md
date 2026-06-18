@@ -1,68 +1,70 @@
-# Macos_PKdictation (monorepo)
+# Macos_PKdictation
 
-Monorepo rassemblant mes apps macOS de transcription/dictée vocale **push-to-talk**.
+Monorepo de mes apps macOS **push-to-talk** de transcription/dictée vocale.
 Historiquement 3 dépôts séparés, fusionnés ici en gardant tout l'historique git.
 
-> URL du dépôt : https://github.com/mondary/Macos_PKdictation
-> (le nom `PKdictation` est conservé car c'est le dépôt le plus ancien ; il sert désormais de monorepo)
+🔗 https://github.com/mondary/Macos_PKdictation
+
+---
+
+## Les 3 apps
+
+| App | Statut | Langage | Description | README |
+|---|---|---|---|---|
+| **PKvoice** | 🟢 active | Go + cgo | App principale : Speech + multi-IA + traduction + notch animé | [`apps/pkvoice/README.md`](apps/pkvoice/README.md) |
+| **PKdictation** | 📦 archive | Swift / Xcode | Essai Swift via Gemini, abandonné | [`archive/pkdictation/README.md`](archive/pkdictation/README.md) |
+| **PKtranscript** | 📦 archive | Go + cgo | MVP Go, ancêtre direct de PKvoice (code déjà absorbé) | [`archive/pktranscript/README.md`](archive/pktranscript/README.md) |
 
 ## Structure
 
 ```
 .
-├── apps/                       ← apps vivantes, maintenues
-│   └── pkvoice/                ← app principale (Go + cgo)
-└── archive/                    ← apps archivées, en lecture seule
-    ├── pkdictation/            ← essai Swift/Xcode (abandonné)
-    └── pktranscript/           ← MVP Go (ancêtre direct de pkvoice)
+├── apps/
+│   └── pkvoice/            ← 🟢 app vivante (34 commits d'historique)
+└── archive/
+    ├── pkdictation/        ← 📦 archive (voie Swift abandonnée)
+    └── pktranscript/       ← 📦 archive (MVP Go absorbé dans pkvoice)
 ```
 
-## Apps
+## Détails
 
-### `apps/pkvoice` — app principale
+### `apps/pkvoice` — l'app à utiliser
 
-App macOS en Go (bindings Objective-C via cgo) :
+Menu-bar push-to-talk (Go + cgo). Transcription **offline** via Apple Speech,
+nettoyage IA optionnel (OpenAI / Claude / Gemini / OpenRouter / Z.AI),
+traduction via `Fn+Ctrl`, notch animé, UI FR/ENG.
 
-- Push-to-talk global (touche configurable, `Fn` par défaut)
-- Transcription via le framework Apple **Speech** (offline)
-- **Nettoyage IA** optionnel de la transcription (multi-provider : OpenAI, Claude, Gemini, OpenRouter, Z.AI)
-- **Traduction** via raccourci `Fn+Ctrl` (langue cible configurable)
-- Menu barre avec historique, settings, et toggle auto-paste
-- **Notch animé** pendant l'enregistrement (patterns personnalisables)
-- UI localisée (FR/ENG)
+➡️ **Tout est dans [`apps/pkvoice/README.md`](apps/pkvoice/README.md)** : build, usage, settings.
 
-➡️ Voir [`apps/pkvoice/README.md`](apps/pkvoice/README.md) pour le build et l'utilisation.
+### `archive/pkdictation`
 
-### `archive/pkdictation` — voie Swift (abandonnée)
+Essai Swift/Xcode avec transcription **Gemini cloud**. Code modulaire propre
+(`Audio/`, `Hotkey/`, `Gemini/`, `Keychain/`, `Overlay/`, `Logging/`)
+mais jamais terminé (2 commits : `first commit`, `bof`). Gardé pour référence.
 
-Essai d'app menu-bar en **Swift / Xcode** avec transcription via **Gemini API**.
-2 commits seulement (`first commit`, `bof`), jamais terminée. Code modulaire propre
-(modules `Audio/`, `Hotkey/`, `Gemini/`, `Keychain/`, `Overlay/`, `Logging/`).
-Archivée pour référence.
+➡️ Voir [`archive/pkdictation/README.md`](archive/pkdictation/README.md)
 
-### `archive/pktranscript` — MVP Go (absorbé dans pkvoice)
+### `archive/pktranscript`
 
-Premier MVP en Go de la chaîne. C'est l'ancêtre direct de `pkvoice` :
-le tout premier commit de `pkvoice` (`Initial PKvoice scaffold from PKTranscript`)
-copie intégralement son `run_darwin.go` (936 lignes), puis 33 commits plus tard
-ce fichier est passé à 2 864 lignes avec le multi-provider IA, le notch, etc.
+Premier MVP Go de la chaîne. **Ancêtre direct de `pkvoice`** : le premier commit
+de `pkvoice` (`Initial PKvoice scaffold from PKTranscript`) copie intégralement son
+`run_darwin.go` (936 lignes), passé depuis à 2 864 lignes.
 
-Archivé pour traçabilité historique — **tout son code est déjà dans `apps/pkvoice/`**.
+➡️ **Tout son code est déjà dans `apps/pkvoice/`** — l'archive est purement historique.
+Voir [`archive/pktranscript/README.md`](archive/pktranscript/README.md)
 
-## Pourquoi un monorepo ?
+---
 
-- Éviter la confusion entre 3 dépôts qui faisaient la même chose
-- Centraliser l'historique (PKtranscript → PKvoice → ...)
-- Garder un seul dépôt vivant (`apps/`) tout en préservant les anciens (`archive/`)
+## Historique git préservé
 
-## Historique git
+L'historique complet de chaque app est dans ce monorepo
+(import via `git filter-repo --to-subdirectory-filter`) :
 
-L'historique de chaque app est **entièrement préservé** dans ce monorepo
-(via `git filter-repo --to-subdirectory-filter`) :
+```sh
+git log -- apps/pkvoice           # → 34 commits (mondary/Macos_PKvoice)
+git log -- archive/pktranscript   # → 17 commits (mondary/Macos_PKtranscript)
+git log -- archive/pkdictation    # → commits originaux de ce dépôt
+```
 
-- `git log -- apps/pkvoice` → 34 commits de `mondary/Macos_PKvoice`
-- `git log -- archive/pktranscript` → 17 commits de `mondary/Macos_PKtranscript`
-- `git log -- archive/pkdictation` → commits historiques de ce dépôt
-
-Les dépôts GitHub originaux `Macos_PKvoice` et `Macos_PKtranscript` sont archivés
-(lecture seule) et pointent vers ce monorepo.
+Les dépôts GitHub `Macos_PKvoice` et `Macos_PKtranscript` sont archivés
+en lecture seule et pointent vers ce monorepo.
