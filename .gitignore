@@ -4,3 +4,6 @@
 /.derivedData_codex*
 /DerivedData
 /dist
+
+# IDE / editor local config
+.vscode/
