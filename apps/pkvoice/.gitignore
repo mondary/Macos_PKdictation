@@ -1,0 +1,44 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Build products
+release/
+build/
+.build/
+DerivedData/
+*.app/
+*.framework/
+*.dSYM/
+*.ipa
+
+# Go
+go/dist
+
+# Local build caches (keep out of git)
+.cache/
+src/.cache/
+
+# Secrets / local config
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.mobileprovision
+*.cer
+*.crt
+
+# Temporary files
+*.swp
+*.swo
+*~
+.*.sw[a-z]
+
+# Skills directory
+.skills/
+
+# IDE / editor local config
+.vscode/
