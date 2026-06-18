@@ -1,9 +1,45 @@
-/.DS_Store
+# macOS .DS_Store
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Xcode / Swift build artifacts
 /.derivedData
 /.derivedData_*
 /.derivedData_codex*
-/DerivedData
+DerivedData/
 /dist
+
+# Go build artifacts
+*.app/
+*.framework/
+*.dSYM/
+*.ipa
+
+# Local build caches
+.cache/
+**/.cache/
+
+# Secrets / local config
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.mobileprovision
+*.cer
+*.crt
 
 # IDE / editor local config
 .vscode/
+.idea/
+
+# Skills symlink (per-project)
+.skills/
+
+# Temporary files
+*.swp
+*.swo
+*~
+.*.sw[a-z]
